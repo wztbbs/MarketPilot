@@ -29,7 +29,9 @@ from pathlib import Path
 TZ = timezone(timedelta(hours=8))
 HERE = Path(__file__).resolve().parents[1] / 'importants' / '回归测试'
 SUITE_VERSION = 'common-v3-55-home'
-FALLBACK = re.compile(r'无法可靠生成查询计划|没有能够可靠回答此问题的查询计划|本次未执行查询|澄清表单生成失败')
+# 不再把"本次未执行查询"单独作为兜底特征：提示词已把它写进合法拒绝的范例
+# （dag_planner.txt 的 1 分钟 K 线示例），真实兜底文案必带前两种表述。
+FALLBACK = re.compile(r'无法可靠生成查询计划|没有能够可靠回答此问题的查询计划|澄清表单生成失败')
 REFERENCE = re.compile(r'^\{\{([^{}]+)\}\}$')
 
 

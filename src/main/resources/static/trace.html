@@ -260,8 +260,32 @@
     }
     html += '</div>';
 
-    /* ④ 汇总结论 */
-    html += '<div class="section"><h2><span class="no">4</span>汇总结论</h2>'
+    /* ④ LLM 分段诊断；历史记录没有 diagnostics，不能把缺失值显示成 0。 */
+    var llmCalls = events.filter(function (e) { return e.event_type === 'LLM_CALL'; });
+    if (llmCalls.length) {
+      html += '<div class="section"><h2><span class="no">4</span>LLM 调用诊断</h2>';
+      llmCalls.forEach(function (e) {
+        var d = e.output && e.output.diagnostics;
+        html += '<details><summary>' + esc(e.name) + ' · ' + esc(e.duration_ms) + 'ms'
+          + (e.error ? ' · 失败' : '') + '</summary>';
+        if (d) {
+          html += '<div class="meta-grid">'
+            + metaItem('连接等待 ms', d.connection_wait_ms)
+            + metaItem('首包 ms', d.first_chunk_ms)
+            + metaItem('首正文 ms', d.first_content_ms)
+            + metaItem('最大流间隔 ms', d.max_chunk_gap_ms)
+            + metaItem('思考字符', d.reasoning_chars)
+            + metaItem('思考 tokens', d.reasoning_tokens)
+            + '</div><pre class="json">' + esc(pretty(d)) + '</pre>';
+        } else {
+          html += '<p>该历史调用未采集分段诊断指标。</p>';
+        }
+        html += '</details>';
+      });
+      html += '</div>';
+    }
+    /* ⑤ 汇总结论 */
+    html += '<div class="section"><h2><span class="no">5</span>汇总结论</h2>'
       + '<div class="answer-text">' + esc(trace.answer || '（无回答）') + '</div></div>';
 
     content.innerHTML = html;

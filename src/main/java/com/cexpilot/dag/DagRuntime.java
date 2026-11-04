@@ -419,7 +419,7 @@ public class DagRuntime {
         } catch (Exception e) {
             if (!received) usages.add(planner.answerUsage(null));
             sink.record(TraceEvent.llmCall(traceId, "answer",
-                    answerEventInput(messages, timeContext), null,
+                    answerEventInput(messages, timeContext), LlmTraceSerializer.failureToJson(e),
                     System.currentTimeMillis() - start, null, null, null, null, e.getMessage()));
             throw e;
         }

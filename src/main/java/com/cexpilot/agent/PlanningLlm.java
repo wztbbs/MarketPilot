@@ -31,7 +31,7 @@ public class PlanningLlm {
         try { response=client.chat(List.copyOf(messages),null); }
         catch (RuntimeException error) {
             usages.add(LlmUsage.of("normal",config.getNormal(),null));
-            sink.record(TraceEvent.llmCall(traceId,stage,input.toString(),null,(System.nanoTime()-start)/1_000_000,
+            sink.record(TraceEvent.llmCall(traceId,stage,input.toString(),LlmTraceSerializer.failureToJson(error),(System.nanoTime()-start)/1_000_000,
                     null,null,null,null,error.getMessage()));
             throw error;
         }

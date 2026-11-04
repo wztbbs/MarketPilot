@@ -824,7 +824,7 @@ public class DagPlanner {
         } catch (Exception e) {
             if (!received) usages.add(LlmUsage.of(role, model, null));
             sink.record(TraceEvent.llmCall(traceId, TRACE_NAME,
-                    input, null,
+                    input, LlmTraceSerializer.failureToJson(e),
                     System.currentTimeMillis() - start, null, null, null, null, e.getMessage()));
             throw e;
         }

@@ -4,7 +4,6 @@ import com.cexpilot.runtime.TraceEvent;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
-import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -16,8 +15,12 @@ public class TraceRepository {
 
     private final JdbcTemplate jdbc;
 
-    public TraceRepository(JdbcTemplate jdbc) {
+    private final com.cexpilot.time.DatabaseTime databaseTime;
+    public TraceRepository(JdbcTemplate jdbc) { this(jdbc, com.cexpilot.time.DatabaseTime.legacyDefault()); }
+    @org.springframework.beans.factory.annotation.Autowired
+    public TraceRepository(JdbcTemplate jdbc, com.cexpilot.time.DatabaseTime databaseTime) {
         this.jdbc = jdbc;
+        this.databaseTime = databaseTime;
     }
 
     public void saveRouting(String traceId,String agent,int routerCalls) {
@@ -100,29 +103,29 @@ public class TraceRepository {
     }
 
     public Map<String, Object> findTrace(String traceId) {
-        List<Map<String, Object>> rows = jdbc.queryForList(
-                "SELECT * FROM ask_trace WHERE trace_id = ?", traceId);
+        List<Map<String, Object>> rows = jdbc.query(
+                "SELECT * FROM ask_trace WHERE trace_id = ?", databaseTime.rowMapper(), traceId);
         return rows.isEmpty() ? null : rows.get(0);
     }
 
     public List<Map<String, Object>> findEvents(String traceId) {
-        return jdbc.queryForList(
-                "SELECT * FROM trace_event WHERE trace_id = ? ORDER BY seq", traceId);
+        return jdbc.query(
+                "SELECT * FROM trace_event WHERE trace_id = ? ORDER BY seq", databaseTime.rowMapper(), traceId);
     }
 
     // 窗口由数据库自己的 NOW() 计算：created_at 是 DB 时钟写的，比较双方必须同为 DB 时钟，
     // 否则应用服务器（如硅谷）与数据库（如 UTC+8）时区不一致时会捞空。
     public List<Map<String, Object>> findTracesBetween(long beginMinutesAgo, long endMinutesAgo) {
-        return jdbc.queryForList("""
+        return jdbc.query("""
                         SELECT * FROM ask_trace
                         WHERE created_at BETWEEN NOW() - INTERVAL ? MINUTE AND NOW() - INTERVAL ? MINUTE
                         ORDER BY created_at DESC
                         """,
-                beginMinutesAgo, endMinutesAgo);
+                databaseTime.rowMapper(), beginMinutesAgo, endMinutesAgo);
     }
 
-    public Timestamp dbNow() {
-        return jdbc.queryForObject("SELECT NOW()", Timestamp.class);
+    public java.time.OffsetDateTime dbNow() {
+        return jdbc.queryForObject("SELECT NOW()", (rs, n) -> databaseTime.offset(rs.getObject(1, java.time.LocalDateTime.class)));
     }
 
     public Map<String, List<Map<String, Object>>> findEventsByTraceIds(List<String> traceIds) {
@@ -140,7 +143,7 @@ public class TraceRepository {
             return Map.of();
         }
         String placeholders = String.join(", ", Collections.nCopies(traceIds.size(), "?"));
-        List<Map<String, Object>> rows = jdbc.queryForList(String.format(sql, placeholders), traceIds.toArray());
+        List<Map<String, Object>> rows = jdbc.query(String.format(sql, placeholders), databaseTime.rowMapper(), traceIds.toArray());
         Map<String, List<Map<String, Object>>> grouped = new LinkedHashMap<>();
         for (Map<String, Object> row : rows) {
             grouped.computeIfAbsent((String) row.get("trace_id"), k -> new ArrayList<>()).add(row);

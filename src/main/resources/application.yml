@@ -109,3 +109,8 @@ logging:
 
 home:
   suggestions-location: ${HOME_SUGGESTIONS_LOCATION:classpath:home-suggestions.yml}
+
+# Legacy conversation/trace DATETIME storage zone; match the MySQL session wall clock.
+# This does not apply to monitor tables, whose timestamps are explicitly stored in UTC.
+app:
+  database-time-zone: ${DB_TIME_ZONE:Asia/Shanghai}

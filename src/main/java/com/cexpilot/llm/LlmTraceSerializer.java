@@ -44,7 +44,17 @@ public final class LlmTraceSerializer {
         if (response.toolCalls() != null && !response.toolCalls().isEmpty()) {
             node.set("tool_calls", toolCallsNode(response.toolCalls()));
         }
+        if (response.diagnostics() != null) node.set("diagnostics", response.diagnostics());
         return node;
+    }
+
+    public static String failureToJson(Throwable error) {
+        for (Throwable cause = error; cause != null; cause = cause.getCause()) {
+            if (cause instanceof com.cexpilot.exception.LlmException llm && llm.diagnostics() != null) {
+                return MAPPER.createObjectNode().set("diagnostics", llm.diagnostics()).toString();
+            }
+        }
+        return null;
     }
 
     public static JsonNode messageNode(ChatMessage message) {

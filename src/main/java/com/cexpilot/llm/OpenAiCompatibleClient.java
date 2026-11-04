@@ -11,7 +11,6 @@ import org.apache.hc.client5.http.config.RequestConfig;
 import org.apache.hc.client5.http.impl.classic.CloseableHttpClient;
 import org.apache.hc.client5.http.impl.classic.HttpClients;
 import org.apache.hc.client5.http.impl.DefaultClientConnectionReuseStrategy;
-import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManager;
 import org.apache.hc.core5.util.TimeValue;
 import org.apache.hc.core5.util.Timeout;
 import org.slf4j.Logger;
@@ -42,6 +41,7 @@ public class OpenAiCompatibleClient implements LlmClient {
     private static final Logger log = LoggerFactory.getLogger(OpenAiCompatibleClient.class);
 
     private final RestClient restClient;
+    private final ObservedConnectionManager connectionManager;
     private final LlmConfig.ModelConfig config;
     private final double temperature;
     private final Long seed;
@@ -52,7 +52,7 @@ public class OpenAiCompatibleClient implements LlmClient {
         this.temperature = temperature;
         this.seed = seed;
 
-        PoolingHttpClientConnectionManager connectionManager = new PoolingHttpClientConnectionManager();
+        connectionManager = new ObservedConnectionManager();
         connectionManager.setMaxTotal(50);
         connectionManager.setDefaultMaxPerRoute(50);
         connectionManager.setDefaultConnectionConfig(ConnectionConfig.custom()
@@ -113,30 +113,42 @@ public class OpenAiCompatibleClient implements LlmClient {
         log.info("LLM 请求 POST {}/chat/completions model={} 消息数={} body={}",
                 baseUrl, config.getModel(), messages.size(), abbreviate(body.toString(), 2000));
         JsonNode response;
+        LlmCallDiagnostics diagnostics = new LlmCallDiagnostics();
+        connectionManager.begin(diagnostics);
         try {
             String raw = restClient.post()
                     .uri("/chat/completions")
                     .body(body)
-                    .retrieve()
-                    .body(String.class);
+                    .exchange((request, reply) -> {
+                        diagnostics.headers(reply);
+                        String rawBody = new String(reply.getBody().readAllBytes(), StandardCharsets.UTF_8);
+                        if (!reply.getStatusCode().is2xxSuccessful())
+                            throw new LlmException("LLM 调用失败: HTTP " + reply.getStatusCode().value()
+                                    + " " + abbreviate(rawBody, 500));
+                        return rawBody;
+                    });
             response = MAPPER.readTree(raw);
+            diagnostics.nonStreaming(response);
         } catch (RestClientResponseException e) {
             // HTTP 错误状态（如 401/429/451）：状态码 + 响应 body 必须留下来
             log.warn("LLM 请求失败 model={} {}ms 状态={} body={}",
                     config.getModel(), System.currentTimeMillis() - start,
                     e.getStatusCode(), abbreviate(e.getResponseBodyAsString(), 2000));
-            throw new LlmException("LLM 调用失败: HTTP " + e.getStatusCode() + " " + e.getStatusText(), e);
+            throw new LlmException("LLM 调用失败: HTTP " + e.getStatusCode() + " " + e.getStatusText(), e)
+                    .withDiagnostics(diagnostics.finish(connectionManager.getTotalStats(), "ERROR"));
         } catch (Exception e) {
             log.warn("LLM 请求异常 model={} {}ms: {}",
                     config.getModel(), System.currentTimeMillis() - start, e.getMessage());
-            throw new LlmException("LLM 调用失败: " + e.getMessage(), e);
-        }
+            throw new LlmException("LLM 调用失败: " + e.getMessage(), e)
+                    .withDiagnostics(diagnostics.finish(connectionManager.getTotalStats(), "ERROR"));
+        } finally { connectionManager.end(); }
 
         JsonNode choices = response.path("choices");
         if (!choices.isArray() || choices.isEmpty()) {
             log.warn("LLM 返回缺少 choices model={} body={}",
                     config.getModel(), abbreviate(response.toString(), 2000));
-            throw new LlmException("LLM 返回缺少 choices: " + response);
+            throw new LlmException("LLM 返回缺少 choices")
+                    .withDiagnostics(diagnostics.finish(connectionManager.getTotalStats(), "ERROR"));
         }
         JsonNode message = choices.get(0).path("message");
         String content = message.path("content").isTextual() ? message.path("content").asText() : null;
@@ -162,7 +174,8 @@ public class OpenAiCompatibleClient implements LlmClient {
         Integer cachedTokens = usage.path("prompt_tokens_details").path("cached_tokens").isInt()
                 ? usage.path("prompt_tokens_details").path("cached_tokens").asInt() : null;
 
-        ChatResponse result = new ChatResponse(content, toolCalls, promptTokens, completionTokens, cachedTokens, null);
+        ChatResponse result = new ChatResponse(content, toolCalls, promptTokens, completionTokens, cachedTokens, null,
+                diagnostics.finish(connectionManager.getTotalStats(), "SUCCESS"));
         // 与 trace 使用同一序列化：完整保留正文和工具调用，换行转义，便于按行检索。
         log.info("LLM 响应 {}ms model={} promptTokens={} completionTokens={} cachedTokens={} response={}",
                 System.currentTimeMillis() - start, config.getModel(),
@@ -173,7 +186,7 @@ public class OpenAiCompatibleClient implements LlmClient {
     /**
      * 流式回答（OpenAI SSE）：逐 chunk 回调增量文本，聚合为完整响应返回。
      * stream_options.include_usage 让最后一个 chunk 携带 token 用量（含缓存命中量）；
-     * 首个 data chunk 的到达时间记为 TTFT（prefill 结束点）。客户端断开等
+     * 首个 data chunk 的到达时间保留为 ttftMs（可能只有角色，不等于首个正文）。客户端断开等
      * 回调异常会向上传播中断读取，由调用方按失败处理。
      */
     @Override
@@ -192,13 +205,15 @@ public class OpenAiCompatibleClient implements LlmClient {
         log.info("LLM 流式请求 POST {}/chat/completions model={} 消息数={}",
                 baseUrl, config.getModel(), messages.size());
         StringBuilder content = new StringBuilder();
-        long[] ttftMs = {-1};
+        LlmCallDiagnostics diagnostics = new LlmCallDiagnostics();
+        connectionManager.begin(diagnostics);
         Integer[] tokens = new Integer[3]; // [promptTokens, completionTokens, cachedTokens]
         try {
             restClient.post()
                     .uri("/chat/completions")
                     .body(body)
                     .exchange((request, response) -> {
+                        diagnostics.headers(response);
                         if (!response.getStatusCode().is2xxSuccessful()) {
                             String errorBody = new String(response.getBody().readAllBytes(), StandardCharsets.UTF_8);
                             throw new LlmException("LLM 流式调用失败: HTTP " + response.getStatusCode()
@@ -212,13 +227,11 @@ public class OpenAiCompatibleClient implements LlmClient {
                                     continue;
                                 }
                                 String payload = line.substring(5).trim();
-                                if (payload.isEmpty() || "[DONE]".equals(payload)) {
-                                    continue;
-                                }
-                                if (ttftMs[0] < 0) {
-                                    ttftMs[0] = System.currentTimeMillis() - start;
-                                }
+                                if (payload.isEmpty()) continue;
+                                if ("[DONE]".equals(payload)) { diagnostics.doneMarker(); continue; }
+                                diagnostics.packet();
                                 JsonNode chunk = MAPPER.readTree(payload);
+                                diagnostics.chunk(chunk);
                                 JsonNode delta = chunk.path("choices").path(0).path("delta").path("content");
                                 if (delta.isTextual() && !delta.asText().isEmpty()) {
                                     if (onDelta != null) {
@@ -240,15 +253,16 @@ public class OpenAiCompatibleClient implements LlmClient {
         } catch (LlmException e) {
             log.warn("LLM 流式调用失败 model={} {}ms: {}",
                     config.getModel(), System.currentTimeMillis() - start, e.getMessage());
-            throw e;
+            throw e.withDiagnostics(diagnostics.finish(connectionManager.getTotalStats(), "ERROR"));
         } catch (Exception e) {
             log.warn("LLM 流式调用异常 model={} {}ms: {}",
                     config.getModel(), System.currentTimeMillis() - start, e.getMessage());
-            throw new LlmException("LLM 流式调用失败: " + e.getMessage(), e);
-        }
+            throw new LlmException("LLM 流式调用失败: " + e.getMessage(), e)
+                    .withDiagnostics(diagnostics.finish(connectionManager.getTotalStats(), "ERROR"));
+        } finally { connectionManager.end(); }
 
         ChatResponse result = new ChatResponse(content.toString(), List.of(), tokens[0], tokens[1], tokens[2],
-                ttftMs[0] < 0 ? null : ttftMs[0]);
+                diagnostics.firstChunk(), diagnostics.finish(connectionManager.getTotalStats(), "SUCCESS"));
         log.info("LLM 流式响应 {}ms model={} promptTokens={} completionTokens={} cachedTokens={} ttft={}ms response={}",
                 System.currentTimeMillis() - start, config.getModel(), tokens[0], tokens[1], tokens[2],
                 result.ttftMs(), LlmTraceSerializer.responseToJson(result));

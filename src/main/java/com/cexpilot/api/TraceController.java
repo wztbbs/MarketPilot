@@ -10,7 +10,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -71,9 +70,9 @@ public class TraceController {
         long endMinutesAgo = Math.round(endHour * 60);
 
         // 窗口在 DB 侧按 DB 时钟计算（created_at 由 DB 写入）；这里取 dbNow 仅为展示窗口边界
-        LocalDateTime dbNow = traceRepository.dbNow().toLocalDateTime();
-        LocalDateTime begin = dbNow.minusMinutes(beginMinutesAgo);
-        LocalDateTime end = dbNow.minusMinutes(endMinutesAgo);
+        java.time.OffsetDateTime dbNow = traceRepository.dbNow();
+        java.time.OffsetDateTime begin = dbNow.minusMinutes(beginMinutesAgo);
+        java.time.OffsetDateTime end = dbNow.minusMinutes(endMinutesAgo);
 
         List<Map<String, Object>> traces = traceRepository.findTracesBetween(beginMinutesAgo, endMinutesAgo);
         log.info("traces 查询: beginHour={}, endHour={}, dbNow={}, 窗口 [{} ~ {}], 命中 {} 条",
@@ -90,7 +89,7 @@ public class TraceController {
             trace.put("feedback", feedbackByTrace.getOrDefault(traceId, List.of()));
         }
 
-        DateTimeFormatter fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+        DateTimeFormatter fmt = DateTimeFormatter.ISO_OFFSET_DATE_TIME;
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("begin", begin.format(fmt));
         body.put("end", end.format(fmt));

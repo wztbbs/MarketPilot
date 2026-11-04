@@ -39,6 +39,15 @@ class ConversationBrowsingTest {
         assertEquals("BTC 多少钱？",jdbc.queryForObject("SELECT title FROM conversation WHERE conversation_id=?",String.class,id));
         mvc.perform(get("/api/conversation/"+id).cookie(new Cookie("cexpilot_uid",visitor))).andExpect(jsonPath("$.parentTurnId").value(""));
     }
+    @Test void listAndHistoryExposeOffsetInsteadOfAmbiguousLocalTimes() throws Exception {
+        service.getOrCreateConversation("time-case","时间","owner");message("time-case","turn");
+        jdbc.update("UPDATE conversation SET last_active_at=TIMESTAMP '2026-11-03 19:35:43' WHERE conversation_id='time-case'");
+        jdbc.update("UPDATE conversation_query SET created_at=TIMESTAMP '2026-11-03 19:35:43' WHERE conversation_id='time-case'");
+        mvc.perform(get("/api/conversations").cookie(new Cookie("cexpilot_uid","owner")))
+                .andExpect(jsonPath("$[0].lastActiveAt").value("2026-11-03T19:35:43+08:00"));
+        mvc.perform(get("/api/conversation/time-case").cookie(new Cookie("cexpilot_uid","owner")))
+                .andExpect(jsonPath("$.messages[0].createdAt").value("2026-11-03T19:35:43+08:00"));
+    }
     @Test void listSearchPaginationAndHistoryAreScopedToVisitor() throws Exception {
         String a=service.getOrCreateConversation("a","BTC 比较","v1");message(a,"parent-a");
         String b=service.getOrCreateConversation("b","ETH 行情","v1");message(b,"parent-b");

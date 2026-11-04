@@ -10,8 +10,12 @@ public class ConversationRepository {
 
     private final JdbcTemplate jdbc;
 
-    public ConversationRepository(JdbcTemplate jdbc) {
+    private final com.cexpilot.time.DatabaseTime databaseTime;
+    public ConversationRepository(JdbcTemplate jdbc) { this(jdbc, com.cexpilot.time.DatabaseTime.legacyDefault()); }
+    @org.springframework.beans.factory.annotation.Autowired
+    public ConversationRepository(JdbcTemplate jdbc, com.cexpilot.time.DatabaseTime databaseTime) {
         this.jdbc = jdbc;
+        this.databaseTime = databaseTime;
     }
 
     public com.fasterxml.jackson.databind.JsonNode routingState(String conversationId) {
@@ -61,8 +65,8 @@ public class ConversationRepository {
         return count != null && count > 0;
     }
 
-    public record Summary(String conversationId, String title, java.time.LocalDateTime createdAt,
-                          java.time.LocalDateTime lastActiveAt) {}
+    public record Summary(String conversationId, String title, @com.fasterxml.jackson.annotation.JsonFormat(shape=com.fasterxml.jackson.annotation.JsonFormat.Shape.STRING) java.time.OffsetDateTime createdAt,
+                          @com.fasterxml.jackson.annotation.JsonFormat(shape=com.fasterxml.jackson.annotation.JsonFormat.Shape.STRING) java.time.OffsetDateTime lastActiveAt) {}
 
     public List<Summary> list(String visitor, String search, int limit, int offset) {
         if (visitor == null || visitor.isBlank()) return List.of();
@@ -72,7 +76,8 @@ public class ConversationRepository {
                   AND EXISTS (SELECT 1 FROM conversation_query q WHERE q.conversation_id=c.conversation_id)
                 ORDER BY c.last_active_at DESC,c.conversation_id DESC LIMIT ? OFFSET ?
                 """, (rs,n)->new Summary(rs.getString("conversation_id"),rs.getString("title"),
-                rs.getTimestamp("created_at").toLocalDateTime(),rs.getTimestamp("last_active_at").toLocalDateTime()),
+                databaseTime.offset(rs.getObject("created_at", java.time.LocalDateTime.class)),
+                databaseTime.offset(rs.getObject("last_active_at", java.time.LocalDateTime.class))),
                 visitor,search,search,limit,offset);
     }
 
@@ -101,7 +106,7 @@ public class ConversationRepository {
                         rs.getString("question"),
                         rs.getString("answer"),
                         rs.getString("trace_id"),
-                        rs.getTimestamp("created_at").toLocalDateTime(),
+                        rs.getObject("created_at", java.time.LocalDateTime.class),
                         rs.getString("turn_id"), rs.getString("turn_status"),rs.getString("agent_type"),readAgentPayload(rs.getString("agent_payload_json"))),
                 conversationId);
     }

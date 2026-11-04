@@ -7,7 +7,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.server.ResponseStatusException;
 import java.util.Map;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 @RestController
@@ -16,8 +15,12 @@ public class ConversationController {
 
     private final ConversationService conversation;
 
-    public ConversationController(ConversationService conversation) {
+    private final com.cexpilot.time.DatabaseTime databaseTime;
+    public ConversationController(ConversationService conversation) { this(conversation, com.cexpilot.time.DatabaseTime.legacyDefault()); }
+    @org.springframework.beans.factory.annotation.Autowired
+    public ConversationController(ConversationService conversation, com.cexpilot.time.DatabaseTime databaseTime) {
         this.conversation = conversation;
+        this.databaseTime = databaseTime;
     }
 
     @ModelAttribute
@@ -77,14 +80,14 @@ public class ConversationController {
                 .map(QueryRecord::turnId).orElse("");
         return new ConversationHistoryResponse(conversationId, parentTurnId,
                 queries.stream()
-                        .map(q -> new QueryMessage(q.question(), q.answer(), q.traceId(), q.createdAt(), q.turnId(), q.turnStatus(), q.agentType(), q.planning()))
+                        .map(q -> new QueryMessage(q.question(), q.answer(), q.traceId(), databaseTime.offset(q.createdAt()), q.turnId(), q.turnStatus(), q.agentType(), q.planning()))
                         .toList());
     }
 
     public record ConversationHistoryResponse(String conversationId, String parentTurnId, List<QueryMessage> messages) {
     }
 
-    public record QueryMessage(String question, String answer, String traceId, LocalDateTime createdAt,
+    public record QueryMessage(String question, String answer, String traceId, @com.fasterxml.jackson.annotation.JsonFormat(shape=com.fasterxml.jackson.annotation.JsonFormat.Shape.STRING) java.time.OffsetDateTime createdAt,
                                String turnId, String turnStatus, String type, com.fasterxml.jackson.databind.JsonNode planning) {
         @com.fasterxml.jackson.annotation.JsonProperty("clarify")
         public java.util.List<com.cexpilot.dag.ClarificationField> clarify() {

@@ -29,11 +29,14 @@ class TraceControllerTest {
         var repo=org.mockito.Mockito.mock(com.cexpilot.trace.TraceRepository.class);
         var events=com.cexpilot.trace.PlannerTraceViewTest.repaired();
         var trace=new java.util.LinkedHashMap<String,Object>();trace.put("trace_id","t");
-        org.mockito.Mockito.when(repo.dbNow()).thenReturn(java.sql.Timestamp.valueOf("2026-10-14 12:00:00"));
+        org.mockito.Mockito.when(repo.dbNow()).thenReturn(java.time.OffsetDateTime.parse("2026-10-14T12:00:00+08:00"));
         org.mockito.Mockito.when(repo.findTracesBetween(240,0)).thenReturn(java.util.List.of(trace));
         org.mockito.Mockito.when(repo.findEventsByTraceIds(java.util.List.of("t"))).thenReturn(java.util.Map.of("t",events));
         org.mockito.Mockito.when(repo.findFeedbackByTraceIds(java.util.List.of("t"))).thenReturn(java.util.Map.of());
-        new TraceController(repo).traces(4,0);
+        var batchResponse = new TraceController(repo).traces(4,0);
+        var batchBody = (java.util.Map<?,?>) batchResponse.getBody();
+        org.junit.jupiter.api.Assertions.assertEquals("2026-10-14T08:00:00+08:00", batchBody.get("begin"));
+        org.junit.jupiter.api.Assertions.assertEquals("2026-10-14T12:00:00+08:00", batchBody.get("end"));
         var attempts=(java.util.List<?>)trace.get("planner_attempts");
         org.junit.jupiter.api.Assertions.assertEquals(2,attempts.size());
         org.junit.jupiter.api.Assertions.assertEquals("PASSED",((java.util.Map<?,?>)attempts.get(1)).get("validation_status"));
