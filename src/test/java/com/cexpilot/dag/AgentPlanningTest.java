@@ -55,10 +55,12 @@ class AgentPlanningTest {
         var executor=new DagExecutor(tools,config,providers(provider((q,c)->metricResult(q,c,-1,true))));
         try {
             var query=new DagRuntime(script,planner(script,tools,config),executor,store,Clock.fixed(REQUEST.requestTime(),ZoneOffset.UTC));
-            var dispatcher=new AgentDispatcher(router(script),query,monitor(script),store);
+            var dispatcher=dispatcher(router(script),query,monitor(script),store);
             var events=new ArrayList<TraceEvent>();
-            var result=dispatcher.execute(original,"", "t",events::add,null,REQUEST,null,p->{},new PlannerInput("",null),
+            var deltas=new ArrayList<String>();
+            var result=dispatcher.execute(original,"", "t",events::add,deltas::add,REQUEST,null,p->{},new PlannerInput("",null),
                     new EvidenceSession("c","turn"),JSON.createObjectNode(),r->{});
+            assertEquals(List.of("ETH下跌。"),deltas);
             assertEquals(3,script.calls.size());assertEquals(1,result.routerLlmCalls());assertEquals(1,result.plannerLlmCalls());
             assertEquals(resolved,script.calls.get(1).get(1).content());
             assertTrue(script.calls.get(1).get(0).content().contains(original));
@@ -86,7 +88,7 @@ class AgentPlanningTest {
         when(query.execute(any(),any(),any(),any(),any(),any(),any(),any(),any(),any()))
                 .thenReturn(new ExecutionResult("请补充币种",JSON.createArrayNode(),0,0,0,0,"NEEDS_CLARIFICATION","请补充币种")
                         .withAgent("query",payload));
-        var dispatcher=new AgentDispatcher(router(client),query,monitor(client),new PromptStore(LOADER));
+        var dispatcher=dispatcher(router(client),query,monitor(client),new PromptStore(LOADER));
         var result=dispatcher.execute("比较两所Funding","","t",e->{},null,REQUEST,null,null,
                 new PlannerInput("",null),null,JSON.createObjectNode(),agent->{});
         assertEquals(payload,result.agentPayload());
@@ -213,14 +215,14 @@ class AgentPlanningTest {
         when(query.execute(any(),any(),any(),any(),any(),any(),any(),any(),any(),any()))
                 .thenReturn(new ExecutionResult("行情",JSON.createArrayNode(),1,1,10,5)
                         .withLlmUsages(List.of(new LlmUsage("normal","fake",10,5,0.0))));
-        var dispatcher=new AgentDispatcher(router(script),query,monitor(script),new PromptStore(LOADER));
+        var dispatcher=dispatcher(router(script),query,monitor(script),new PromptStore(LOADER));
         var result=dispatch(dispatcher,"BTC现价",JSON.createObjectNode());
         assertEquals("query",result.agentType()); assertEquals(1,result.routerLlmCalls()); assertEquals(20,result.promptTokens());
         assertEquals(1,script.calls.size()); verify(query).execute(any(),any(),any(),any(),any(),any(),any(),any(),any(),any());
     }
     @Test void dispatcherMonitorOnlyPlansAndRouterDoesNotSeeFullMonitorPlan() {
         var script=new Script("{\"route\":\"monitor\"}",candidate().toString()); var query=mock(DagRuntime.class);
-        var dispatcher=new AgentDispatcher(router(script),query,monitor(script),new PromptStore(LOADER));
+        var dispatcher=dispatcher(router(script),query,monitor(script),new PromptStore(LOADER));
         var state=JSON.createObjectNode().put("active_agent","monitor");
         state.putObject("monitor_context").set("candidate",candidate());
         var result=dispatch(dispatcher,"改成3%",state);
@@ -239,9 +241,11 @@ class AgentPlanningTest {
         var card=JSON.createObjectNode().put("ruleId","draft-1").put("version",1).put("requiredHits",2);
         card.set("candidate",candidate()); card.putArray("rules").addObject().put("description","BTC跌2%");
         when(flow.saveDraft(any(),any(),any(),any(),any())).thenReturn(card);
-        var dispatcher=new AgentDispatcher(router(script),query,monitor(script),new PromptStore(LOADER),flow);
-        var result=dispatcher.execute("监控BTC","","t",e->{},null,REQUEST,null,null,new PlannerInput("",null),
+        var dispatcher=dispatcher(router(script),query,monitor(script),new PromptStore(LOADER),flow);
+        var deltas=new ArrayList<String>();
+        var result=dispatcher.execute("监控BTC","","t",e->{},deltas::add,REQUEST,null,null,new PlannerInput("",null),
                 new EvidenceSession("c","turn"),JSON.createObjectNode(),agent->{},"visitor");
+        assertEquals(List.of(result.answer()),deltas);
         assertEquals("PENDING_CONFIRMATION",result.agentPayload().path("status").asText());
         assertEquals("NOT_ENABLED",result.agentPayload().path("execution_status").asText());
         assertEquals("draft-1",result.agentPayload().at("/confirmation/ruleId").asText());
@@ -251,11 +255,11 @@ class AgentPlanningTest {
     }
     @Test void ambiguousAndTransportFailurePathsNeverExecuteAQuery() {
         var script=new Script("{\"route\":\"clarify\",\"question\":\"查询还是监控？\"}"); var query=mock(DagRuntime.class);
-        var dispatcher=new AgentDispatcher(router(script),query,monitor(script),new PromptStore(LOADER));
+        var dispatcher=dispatcher(router(script),query,monitor(script),new PromptStore(LOADER));
         assertEquals("NEEDS_CLARIFICATION",dispatch(dispatcher,"它呢",JSON.createObjectNode()).turnStatus()); verifyNoInteractions(query);
         LlmClient failed=(m,t)->{ throw new IllegalStateException("offline"); };
-        var broken=new AgentDispatcher(router(failed),query,monitor(failed),new PromptStore(LOADER));
-        var error=assertThrows(DagRuntime.ExecutionFailure.class,()->dispatch(broken,"BTC",JSON.createObjectNode()));
+        var broken=dispatcher(router(failed),query,monitor(failed),new PromptStore(LOADER));
+        var error=assertThrows(com.cexpilot.runtime.ExecutionFailure.class,()->dispatch(broken,"BTC",JSON.createObjectNode()));
         assertEquals(1,error.counters.routerLlmCalls()); assertEquals(0,error.counters.plannerLlmCalls());
     }
     @Test void realQueryBranchStillUsesOldPlannerDagAndAnswerWithAnAdditionalRouterCall() {
@@ -265,7 +269,7 @@ class AgentPlanningTest {
         var executor=new DagExecutor(tools,config,providers(provider((q,c)->metricResult(q,c,12,true))));
         try {
             var query=new DagRuntime(script,planner(script,tools,config),executor,store,Clock.fixed(REQUEST.requestTime(),ZoneOffset.UTC));
-            var dispatcher=new AgentDispatcher(router(script),query,monitor(script),store);
+            var dispatcher=dispatcher(router(script),query,monitor(script),store);
             var events=new ArrayList<TraceEvent>();
             var result=dispatcher.execute("BTC最近一小时变化率", "", "t",events::add,null,REQUEST,null,p->{},new PlannerInput("",null),
                     new EvidenceSession("c","turn"),JSON.createObjectNode(),r->{});
@@ -278,12 +282,12 @@ class AgentPlanningTest {
     }
     @Test void failedQueryRetainsRouterAndQueryCostsWithoutChangingStageCounts() {
         var script=new Script("{\"route\":\"query\"}"); var query=mock(DagRuntime.class);
-        var original=new DagRuntime.TurnCounters(1,1,1,0,1,0,List.of()).withLlmUsages(List.of(
+        var original=new com.cexpilot.runtime.TurnCounters(1,1,1,0,1,0,List.of()).withLlmUsages(List.of(
                 new LlmUsage("normal","fake",10,5,0.0),new LlmUsage("normal","fake",null,null,null)));
         when(query.execute(any(),any(),any(),any(),any(),any(),any(),any(),any(),any()))
-                .thenThrow(new DagRuntime.ExecutionFailure(new IllegalStateException("answer timeout"),original));
-        var dispatcher=new AgentDispatcher(router(script),query,monitor(script),new PromptStore(LOADER));
-        var failure=assertThrows(DagRuntime.ExecutionFailure.class,()->dispatch(dispatcher,"BTC",JSON.createObjectNode()));
+                .thenThrow(new com.cexpilot.runtime.ExecutionFailure(new IllegalStateException("answer timeout"),original));
+        var dispatcher=dispatcher(router(script),query,monitor(script),new PromptStore(LOADER));
+        var failure=assertThrows(com.cexpilot.runtime.ExecutionFailure.class,()->dispatch(dispatcher,"BTC",JSON.createObjectNode()));
         assertEquals(1,failure.counters.routerLlmCalls()); assertEquals(1,failure.counters.plannerLlmCalls());
         assertEquals(1,failure.counters.answerLlmCalls()); assertEquals(3,failure.counters.llmUsages().size());
         assertNull(LlmUsage.totalCost(failure.counters.llmUsages()));
@@ -291,7 +295,7 @@ class AgentPlanningTest {
     @Test void queryAfterMonitorUsesMonitorDefinitionForReferenceAndDoesNotContinueOldQueryByDefault() {
         var script=new Script("{\"route\":\"query\"}"); var query=mock(DagRuntime.class);
         when(query.execute(any(),any(),any(),any(),any(),any(),any(),any(),any(),any())).thenReturn(new ExecutionResult("现价",null,0,0,0,0));
-        var dispatcher=new AgentDispatcher(router(script),query,monitor(script),new PromptStore(LOADER));
+        var dispatcher=dispatcher(router(script),query,monitor(script),new PromptStore(LOADER));
         var state=JSON.createObjectNode().put("active_agent","monitor"); state.putObject("monitor_context").set("candidate",candidate());
         dispatch(dispatcher,"监控那个币现在多少钱",state);
         var captured=org.mockito.ArgumentCaptor.forClass(PlannerInput.class);
@@ -299,6 +303,12 @@ class AgentPlanningTest {
         assertNull(captured.getValue().currentTask()); assertNull(captured.getValue().activeFrame());
         assertTrue(captured.getValue().contextText().contains("跨 Agent 查询"));
         assertTrue(captured.getValue().contextText().contains("BTC"));
+    }
+    private AgentDispatcher dispatcher(IntentRouter router,DagRuntime query,MonitorPlanner monitor,PromptStore prompts) {
+        return dispatcher(router,query,monitor,prompts,null);
+    }
+    private AgentDispatcher dispatcher(IntentRouter router,DagRuntime query,MonitorPlanner monitor,PromptStore prompts,MonitorConversationFlow flow) {
+        return new AgentDispatcher(router,new AgentRegistry(List.of(new MarketAnalysisAgent(query),new MonitorAgent(monitor,prompts,flow))),new AgentContextAssembler());
     }
     private ExecutionResult dispatch(AgentDispatcher dispatcher,String question,JsonNode state) {
         return dispatcher.execute(question,"历史对话","t",e->{},null,REQUEST,null,p->{fail("监控规划不应作为查询执行计划回调");},

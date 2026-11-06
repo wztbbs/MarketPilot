@@ -162,7 +162,7 @@ def order_router_messages(messages):
 
 
 def refresh_parameter_protocol(body, stage, keep_trace_schema=False):
-    """同步本地参数操作协议，保留历史指标/算子 schema，避免旧 schema 强制模型输出旧字段。"""
+    """同步本地参数操作与执行模式协议，保留历史指标/算子 schema。"""
     response_format = body.get("response_format") or {}
     if keep_trace_schema or stage != "planner" or response_format.get("type") != "json_schema":
         return False
@@ -175,6 +175,7 @@ def refresh_parameter_protocol(body, stage, keep_trace_schema=False):
     properties.pop("explicit_conditions", None)
     properties.pop("changes", None)
     properties["condition_updates"] = copy.deepcopy(local["properties"]["condition_updates"])
+    properties["execution_mode"] = copy.deepcopy(local["properties"]["execution_mode"])
     schema["required"] = [key for key in schema.get("required", []) if key not in ("explicit_conditions", "changes")]
     return old != properties
 
@@ -265,7 +266,7 @@ def main(argv=None):
         say(f"query: {metadata.get('question')}\nstage={args.stage} attempt={args.attempt} model={body['model']}")
         say(f"模板：{replacement['template_file']}；历史上下文/目录/时间保持原值")
         if schema_updated:
-            say("已同步本地 condition_updates 输出协议；历史指标与算子 schema 保持原值。")
+            say("已同步本地 condition_updates / execution_mode 输出协议；历史指标与算子 schema 保持原值。")
         if not replacement["system_changed"]:
             say("提示：system prompt 与旧 trace 相同，本次只是在相同输入下再次采样。")
         if args.dry_run:

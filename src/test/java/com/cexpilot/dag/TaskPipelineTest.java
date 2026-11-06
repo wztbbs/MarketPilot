@@ -85,13 +85,13 @@ class TaskPipelineTest {
             assertEquals(3, a3.version()); assertEquals("SUCCEEDED", a3.status());
             assertEquals("查询合约价格", a3.originQuestion());
 
-            assertThrows(DagRuntime.ExecutionFailure.class,
+            assertThrows(com.cexpilot.runtime.ExecutionFailure.class,
                     () -> ask.ask("c1", "换个话题查ETH当前价", "v", "Asia/Shanghai", null, null));
             TaskState b1 = repo.findActiveTask("c1");
             assertNotEquals(a3.frameId(), b1.frameId()); assertEquals("FAILED", b1.status());
             assertEquals("ETH", b1.frame().targets().get(0).instrument().path("base").asText());
             assertFalse(b1.frame().focus().path("evidence_nodes").get(0).path("fact_id").asText().isBlank());
-            assertThrows(DagRuntime.ExecutionFailure.class,
+            assertThrows(com.cexpilot.runtime.ExecutionFailure.class,
                     () -> ask.ask("c1", "再试一次", "v", "Asia/Shanghai", null, null));
             TaskState b2 = repo.findActiveTask("c1");
             assertEquals(b1.frameId(), b2.frameId()); assertEquals(2, b2.version());

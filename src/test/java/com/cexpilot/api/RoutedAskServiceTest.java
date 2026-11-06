@@ -62,11 +62,11 @@ class RoutedAskServiceTest {
     @Test void monitorTransportFailureSavesMonitorFailureAndDoesNotPoisonQueryTask() {
         when(dispatcher.execute(any(),any(),any(),any(),any(),any(),any(),any(),any(),any(),any(),any(),any())).thenAnswer(inv->{
             Consumer<String> selected=inv.getArgument(11); selected.accept("monitor");
-            throw new DagRuntime.ExecutionFailure(new IllegalStateException("monitor timeout"),new DagRuntime.TurnCounters(1,0,0,0,0,0,List.of())
+            throw new com.cexpilot.runtime.ExecutionFailure(new IllegalStateException("monitor timeout"),new com.cexpilot.runtime.TurnCounters(1,0,0,0,0,0,List.of())
                     .withLlmUsages(List.of(new LlmUsage("normal","fake",null,null,null)))
                     .withRouterUsages(List.of(new LlmUsage("normal","fake",3,2,0.0))));
         });
-        assertThrows(DagRuntime.ExecutionFailure.class,()->service.ask(null,"监控BTC","visitor"));
+        assertThrows(com.cexpilot.runtime.ExecutionFailure.class,()->service.ask(null,"监控BTC","visitor"));
         verify(traces).saveRouting(anyString(),eq("monitor"),eq(1));
         verify(conversation).finishRoutedTurn(eq("c"),eq(turn),eq("监控BTC"),eq("FAILED"),isNull(),any(),isNull(),any(),any(),any(),any(),eq("monitor timeout"),eq("monitor"),isNull());
         verifyNoInteractions(oldRuntime);

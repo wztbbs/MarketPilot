@@ -25,6 +25,14 @@ class MonitorApplicationContextTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired MonitorConfig config;
     @Autowired MockMvc mvc;
+    @Test void registeredAgentsUseProductionAdaptersWithCompatibleRoutes() {
+        var registry=context.getBean(com.cexpilot.agent.AgentRegistry.class);
+        assertSame(context.getBean(com.cexpilot.agent.MarketAnalysisAgent.class),registry.require("query"));
+        assertSame(context.getBean(MonitorAgent.class),registry.require("monitor"));
+        assertEquals("market_analysis",registry.require("query").definition().id());
+        assertEquals(2,registry.definitions().size());
+        assertNotNull(context.getBean(com.cexpilot.agent.AgentDispatcher.class).promptVersion());
+    }
     @Test void fullSchemaAndExistingExecutorRemainAvailable() {
         assertFalse(config.isEnabled());
         assertInstanceOf(TaskExecutor.class,context.getBean("applicationTaskExecutor"));

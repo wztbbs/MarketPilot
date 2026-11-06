@@ -146,10 +146,10 @@ class AskServiceTest {
     void 第二模型失败时保留先前token但总费用保持未知() {
         var usages = List.of(new com.cexpilot.llm.LlmUsage("normal","one",10,5,0.02),
                 new com.cexpilot.llm.LlmUsage("flagship","two",null,null,null));
-        var counters = new DagRuntime.TurnCounters(2,0,0,0,0,0,List.of()).withLlmUsages(usages);
+        var counters = new com.cexpilot.runtime.TurnCounters(2,0,0,0,0,0,List.of()).withLlmUsages(usages);
         when(runtime.execute(anyString(),anyString(),anyString(),any(),any(),any(),any(),any(),any(),any()))
-                .thenThrow(new DagRuntime.ExecutionFailure(new IllegalStateException("模型2超时"),counters));
-        assertThrows(DagRuntime.ExecutionFailure.class,() -> service.ask("conv-1","查询","v1",null,null,null));
+                .thenThrow(new com.cexpilot.runtime.ExecutionFailure(new IllegalStateException("模型2超时"),counters));
+        assertThrows(com.cexpilot.runtime.ExecutionFailure.class,() -> service.ask("conv-1","查询","v1",null,null,null));
         verify(traceRepository).finishTrace(anyString(),eq("FAILED"),isNull(),anyInt(),anyInt(),eq(10),eq(5),
                 isNull(),anyLong(),eq("模型2超时"),eq(0),eq(2),eq(0),eq(0),eq(0),eq(0));
     }

@@ -338,6 +338,13 @@
           }
         }
       }
+    },
+    "execution_mode": {
+      "type": "string",
+      "enum": [
+        "single",
+        "adaptive"
+      ]
     }
   },
   "required": [

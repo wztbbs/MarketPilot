@@ -492,7 +492,7 @@ class DagRuntimeTest {
                         new java.math.BigDecimal("90000")));
         var runtime = runtimeWithStore(llm, registry(), ticker, store);
 
-        var ex = assertThrows(DagRuntime.ExecutionFailure.class, () -> runtime.execute("BTC 现价", "", "t",
+        var ex = assertThrows(com.cexpilot.runtime.ExecutionFailure.class, () -> runtime.execute("BTC 现价", "", "t",
                 e -> {}, null,
                 new RequestContext(ZoneId.of("Asia/Shanghai"), Instant.parse("2026-10-12T02:00:00Z")),
                 null, null, plannerInput, new com.cexpilot.evidence.EvidenceSession("conv-1", "turn-9")));

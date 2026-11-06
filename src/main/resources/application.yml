@@ -114,3 +114,13 @@ home:
 # This does not apply to monitor tables, whose timestamps are explicitly stored in UTC.
 app:
   database-time-zone: ${DB_TIME_ZONE:Asia/Shanghai}
+
+# Query 有界反馈：简单查询默认单次 DAG；模型选择 adaptive 才进入后续规划。
+query:
+  execution:
+    adaptive-enabled: ${QUERY_ADAPTIVE_ENABLED:true}
+    max-continuations: 2
+    max-model-calls: 8 # Router、首轮规划、修复、观察和最终回答合计
+    max-tool-calls: 8 # 累计新准入的节点；同请求已执行节点不重复计数
+    timeout-ms: 180000
+    max-observed-tokens: 48000 # 收到 usage 后阻止后续模型调用，不是单次请求的输出 token 上限

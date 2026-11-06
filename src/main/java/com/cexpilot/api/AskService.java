@@ -286,10 +286,10 @@ public class AskService {
         } catch (Exception e) {
             // 失败同样要落 trace 与轮次：失败的现场数据正是后续定位问题、固化评测 case 的原料。
             long durationMs = System.currentTimeMillis() - start;
-            // 4.3：DagRuntime 的 ExecutionFailure 携带已发生的调用计数与已保存事实——失败不统计归零
+            // 公共 ExecutionFailure 携带已发生的调用计数与已保存事实——失败不统计归零
             Exception failure = e;
-            DagRuntime.TurnCounters counters = null;
-            if (e instanceof DagRuntime.ExecutionFailure f) {
+            com.cexpilot.runtime.TurnCounters counters = null;
+            if (e instanceof com.cexpilot.runtime.ExecutionFailure f) {
                 failure = f.getCause() instanceof Exception ex ? ex : e;
                 counters = f.counters;
                 if (f.taskScope != null) taskScopeRef.set(f.taskScope);

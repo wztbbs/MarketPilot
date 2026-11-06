@@ -21,9 +21,17 @@ public class IntentRouter {
     private final PlanningLlm llm;
     private final PromptStore prompts;
     public IntentRouter(PlanningLlm llm,PromptStore prompts) { this.llm=llm; this.prompts=prompts; }
+    public String promptVersion() { return prompts.version(PROMPT); }
     public Decision route(String question,JsonNode context,String traceId,TraceSink sink) {
+        return route(question,context,traceId,sink,List.of(MarketAnalysisAgent.DEFINITION,com.cexpilot.monitor.MonitorAgent.DEFINITION));
+    }
+    public Decision route(String question,JsonNode context,String traceId,TraceSink sink,List<AgentDefinition> agents) {
+        var allowedRoutes=new HashSet<String>(); allowedRoutes.add("clarify");
+        var descriptions=new StringBuilder();
+        for(var agent:agents) { allowedRoutes.add(agent.route()); descriptions.append("- ").append(agent.route()).append(": ").append(agent.description()).append('\n'); }
+
         var messages=new ArrayList<ChatMessage>();
-        messages.add(ChatMessage.system(prompts.render(PROMPT,Map.of())));
+        messages.add(ChatMessage.system(prompts.render(PROMPT,Map.of("agent_routes",descriptions.toString()))));
         var input=new ObjectMapper().createObjectNode();
         input.set("context",orderedContext(context)); input.put("question",question);
         messages.add(ChatMessage.user(input.toString()));
@@ -36,7 +44,7 @@ public class IntentRouter {
                     var parsed=PlanningJson.parse(response.content());
                     PlanningJson.object(parsed,Set.of("route","question","resolved_question"),"路由结果");
                     String route=PlanningJson.text(parsed,"route",16);
-                    if(!Set.of("query","monitor","clarify").contains(route)) throw new IllegalArgumentException("route 仅支持 query/monitor/clarify");
+                    if(!allowedRoutes.contains(route)) throw new IllegalArgumentException("route 仅支持已注册的 Agent 或 clarify");
                     String clarify="clarify".equals(route)?PlanningJson.text(parsed,"question",200):null;
                     String resolved = null;
                     if ("query".equals(route)) {

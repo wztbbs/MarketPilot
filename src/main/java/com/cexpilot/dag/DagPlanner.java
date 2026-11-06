@@ -97,7 +97,15 @@ public class DagPlanner {
                               Optional<com.cexpilot.metric.CompiledPlan> plan, int promptTokens, int completionTokens,
                               String lastError, boolean needsClarification,
                               com.cexpilot.metric.ExecutionBindings bindings, int llmCalls, TaskScope taskScope,
-                              List<LlmUsage> llmUsages, List<ClarificationField> clarificationFields) {
+                              List<LlmUsage> llmUsages, List<ClarificationField> clarificationFields, boolean adaptive) {
+        public PlanOutcome(boolean inDomain,String reply,Optional<com.cexpilot.metric.CompiledPlan> plan,int promptTokens,int completionTokens,
+                String lastError,boolean needsClarification,com.cexpilot.metric.ExecutionBindings bindings,int llmCalls,TaskScope taskScope,
+                List<LlmUsage> llmUsages,List<ClarificationField> fields) {
+            this(inDomain,reply,plan,promptTokens,completionTokens,lastError,needsClarification,bindings,llmCalls,taskScope,llmUsages,fields,false);
+        }
+        public PlanOutcome withAdaptive(boolean enabled) {
+            return new PlanOutcome(inDomain,reply,plan,promptTokens,completionTokens,lastError,needsClarification,bindings,llmCalls,taskScope,llmUsages,clarificationFields,enabled);
+        }
         public PlanOutcome {
             clarificationFields = clarificationFields == null ? List.of() : List.copyOf(clarificationFields);
             llmUsages = llmUsages == null ? List.of() : List.copyOf(llmUsages);
@@ -175,6 +183,8 @@ public class DagPlanner {
         TaskScope lastScope = TaskScope.current(currentTask);
         int maxToolCalls = llmConfig.getMaxToolCalls();
         String systemPrompt = systemPrompt(conversationContext);
+        var requestBudget=com.cexpilot.runtime.QueryBudget.current();
+        if(requestBudget!=null && !requestBudget.config().isAdaptiveEnabled())systemPrompt+="\n本次 adaptive 已关闭，必须使用 single 并说明无法完成的结果驱动子问题。";
         JsonNode responseFormat = plannerResponseFormat();
 
         List<ChatMessage> messages = new ArrayList<>();
@@ -195,6 +205,8 @@ public class DagPlanner {
         try {
             for (int attempt = 1; attempt <= attempts; attempt++) {
                 // 4.3 口径：按尝试次数计——传输失败的调用（欠费/超时）也是已发生的成本
+                var budget=com.cexpilot.runtime.QueryBudget.current();
+                if(budget!=null)budget.beforeModel(true);
                 llmCalls++;
                 ChatResponse response;
                 try {
@@ -231,7 +243,8 @@ public class DagPlanner {
                             : decision.inDomain() ? "NO_PLAN" : "OUT_OF_DOMAIN";
                     recordAttempt(traceId, sink, attempt, lastError, "SUCCEEDED",
                             decision.plan() == null ? "NOT_APPLICABLE" : "PASSED", result, null, decision.plan());
-                    return decision.toOutcome(promptTokens, completionTokens, llmCalls, usages);
+                    return decision.toOutcome(promptTokens, completionTokens, llmCalls, usages)
+                            .withAdaptive("adaptive".equals(LlmJson.parse(response.content()).path("execution_mode").asText()));
                 }
                 if (repairingClarification) {
                     // 专项修复只有一次；即使配置允许更多 planner 重试，也不能循环补表单。
@@ -414,6 +427,8 @@ public class DagPlanner {
                     + "不要直接输出指标数组或旧版 nodes";
             return repairDecision(traceId, sink, parsed.toString(), error);
         }
+        if(parsed.has("execution_mode") && !Set.of("single","adaptive").contains(parsed.path("execution_mode").asText()))
+            return repairDecision(traceId,sink,parsed.toString(),"execution_mode 仅支持 single/adaptive");
         if (!parsed.path("in_domain").asBoolean(false)) {
             recordPlanDropped(traceId, sink, parsed, "in_domain=false 时 plan 必须为空，服务端已丢弃");
             sink.record(TraceEvent.plan(traceId, parsed.toString(), null));
@@ -757,9 +772,46 @@ public class DagPlanner {
                 "conversation_context", conversationContext == null ? "" : conversationContext));
     }
 
+    /** 后续规划只观察和提出增量；不复用首轮 task_action，也不重新选择会话任务。 */
+    public ChatResponse observe(String question,com.cexpilot.metric.CompiledPlan current,JsonNode evidence,
+            JsonNode status,com.cexpilot.runtime.RequestContext request,String traceId,TraceSink sink,List<LlmUsage> usages) {
+        var budget=com.cexpilot.runtime.QueryBudget.current();
+        if(budget!=null)budget.beforeModel(true);
+        var input=MAPPER.createObjectNode().put("question",question).put("request_time",request.requestTime().toString())
+                .put("timezone",request.userZone().getId());
+        input.set("plan",current.logicalPlanJson());input.set("observations",evidence);input.set("query_status",status);
+        if(budget!=null)input.set("budget",budget.snapshot());
+        var messages=List.of(ChatMessage.system(prompts.render("query_continue",Map.of("catalog",continuationCatalog()))),ChatMessage.user(input.toString()));
+        long started=System.nanoTime();boolean received=false;
+        var event=MAPPER.createObjectNode().put("stage","query_continue").put("model_role","normal").put("model",llmConfig.getNormal().getModel())
+                .put("prompt_version",prompts.version("query_continue"));
+        event.set("messages",LlmTraceSerializer.messagesToArray(messages));
+        event.set("request_parameters",llm.requestParameters(null));
+        try {
+            var response=com.cexpilot.runtime.QueryBudget.invoke(()->llm.chat(messages,null));
+            if(budget!=null)budget.observe(response);
+            usages.add(answerUsage(response));received=true;
+            sink.record(TraceEvent.llmCall(traceId,"query_continue",event.toString(),LlmTraceSerializer.responseToJson(response),
+                    (System.nanoTime()-started)/1_000_000,response.promptTokens(),response.completionTokens(),response.ttftMs(),response.cachedTokens(),null));
+            return response;
+        } catch(RuntimeException error) {
+            if(!received)usages.add(answerUsage(null));
+            sink.record(TraceEvent.llmCall(traceId,"query_continue",event.toString(),LlmTraceSerializer.failureToJson(error),
+                    (System.nanoTime()-started)/1_000_000,null,null,null,null,error.getMessage()));
+            throw error;
+        }
+    }
+
+    public com.cexpilot.metric.CompiledPlan compileContinuation(com.cexpilot.metric.CompiledPlan prior,JsonNode additions,String question,com.cexpilot.runtime.RequestContext request) {
+        return new QueryPlanExtension(compiler,validator,dagConfig,llmConfig).append(prior,additions,question,request);
+    }
+    public String continuationCatalog() {
+        return catalog.concepts()+"\n"+catalog.describeMetrics()+"\n"+catalog.describeOperators(registry);
+    }
+
     /** 不含每轮历史的有效规划提示词版本，包含指标目录（含绑定）、算子配置。 */
     public String promptVersion() {
-        return PromptStore.fingerprint(systemPrompt("") + catalog.version() + prompts.version("clarification_repair"));
+        return PromptStore.fingerprint(systemPrompt("") + catalog.version() + prompts.version("clarification_repair") + prompts.version("query_continue"));
     }
 
     private void appendRepair(List<ChatMessage> messages, String badOutput, String error) {
@@ -778,7 +830,8 @@ public class DagPlanner {
         String input = eventInput(attempt, messages, responseFormat, client, role, model.getModel());
         boolean received = false;
         try {
-            ChatResponse response = client.chat(messages, null, responseFormat);
+            ChatResponse response = com.cexpilot.runtime.QueryBudget.invoke(()->client.chat(messages, null, responseFormat));
+            if(com.cexpilot.runtime.QueryBudget.current()!=null)com.cexpilot.runtime.QueryBudget.current().observe(response);
             LlmUsage usage = LlmUsage.of(role, model, response);
             usages.add(usage);
             received = true;

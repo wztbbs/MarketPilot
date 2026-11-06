@@ -108,6 +108,15 @@ public class DagExecutor {
     private ExecutionOutcome executeInternal(DagPlan plan,String traceId,TraceSink sink,RequestContext requestContext,
             com.cexpilot.metric.ExecutionBindings bindings,Map<String,ToolResult> seeds,
             java.util.function.BiConsumer<PlanNode,ToolResult> completed) {
+        return executeInternal(plan,traceId,sink,requestContext,bindings,seeds,completed,null);
+    }
+    public ExecutionOutcome executeIncremental(DagPlan plan,String traceId,TraceSink sink,RequestContext requestContext,
+            ExecutionBindings bindings,Map<String,ToolResult> seeds,com.cexpilot.runtime.QueryBudget budget) {
+        return executeInternal(plan,traceId,sink,requestContext,bindings,seeds,(node,result)->{},budget);
+    }
+    private ExecutionOutcome executeInternal(DagPlan plan,String traceId,TraceSink sink,RequestContext requestContext,
+            ExecutionBindings bindings,Map<String,ToolResult> seeds,java.util.function.BiConsumer<PlanNode,ToolResult> completed,
+            com.cexpilot.runtime.QueryBudget budget) {
         DagContext ctx = new DagContext();
         seeds.forEach(ctx::put);
         // 本轮共享的 HTTP 请求计数器：工作线程进入节点执行前绑定到线程，
@@ -116,16 +125,27 @@ public class DagExecutor {
         List<List<PlanNode>> levels = topoLevels(plan);
         for (List<PlanNode> fullLevel : levels) {
             List<PlanNode> level=fullLevel.stream().filter(node->ctx.get(node.id())==null).toList();
+            if(budget!=null && budget.remainingMs()==0) {
+                for(var node:level) {
+                    ctx.put(node.id(),ToolResult.failure("DEADLINE: 未开始执行"));
+                    sink.record(new TraceEvent(traceId,"QUERY_NODE_NOT_RUN","query_budget",null,
+                            MAPPER.createObjectNode().put("node_id",node.id()).put("reason","DEADLINE").toString(),null,null,null,null,null,"DEADLINE"));
+                }
+                continue;
+            }
             List<Future<NodeOutcome>> futures = new ArrayList<>();
             List<NodeTraceCollector.Session> sessions = new ArrayList<>();
             for (PlanNode node : level) {
                 NodeTraceCollector.Session session = new NodeTraceCollector.Session();
                 sessions.add(session);
-                futures.add(pool.submit(() -> runNode(node, ctx, traceId, requestContext, bindings, httpRequests, session)));
+                futures.add(pool.submit(() -> {
+                    if(budget!=null)budget.checkTime();
+                    return runNode(node,ctx,traceId,requestContext,bindings,httpRequests,session);
+                }));
             }
             try {
                 for (int i = 0; i < level.size(); i++) {
-                    collect(level.get(i), futures.get(i), sessions.get(i), ctx, traceId, sink, bindings);
+                    collect(level.get(i), futures.get(i), sessions.get(i), ctx, traceId, sink, bindings,budget);
                     completed.accept(level.get(i),ctx.get(level.get(i).id()));
                 }
             } finally {
@@ -211,10 +231,10 @@ public class DagExecutor {
     private void collect(PlanNode node, Future<NodeOutcome> future, NodeTraceCollector.Session session,
                          DagContext ctx,
                          String traceId, TraceSink sink,
-                         com.cexpilot.metric.ExecutionBindings bindings) {
+                         com.cexpilot.metric.ExecutionBindings bindings,com.cexpilot.runtime.QueryBudget budget) {
         NodeOutcome outcome;
         try {
-            outcome = future.get(config.getNodeTimeoutMs(), TimeUnit.MILLISECONDS);
+            outcome = future.get(budget==null?config.getNodeTimeoutMs():Math.min(config.getNodeTimeoutMs(),budget.remainingMs()), TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
             future.cancel(true);
             log.warn("节点 {} 执行超时（{}ms），按失败处理", node.id(), config.getNodeTimeoutMs());

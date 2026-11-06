@@ -22,13 +22,16 @@ public class PlanningLlm {
         this.client=client; this.config=config; this.prompts=prompts;
     }
     public ChatResponse call(String stage,String prompt,List<ChatMessage> messages,String traceId,TraceSink sink,List<LlmUsage> usages) {
+        var budget=("router".equals(stage)||"query_continue".equals(stage))?com.cexpilot.runtime.QueryBudget.current():null;
+        if(budget!=null)budget.beforeModel("query_continue".equals(stage));
         var input=JSON.createObjectNode().put("stage",stage).put("attempt",usages.size()+1)
                 .put("model",config.getNormal().getModel()).put("model_role","normal").put("prompt_version",prompts.version(prompt));
         input.set("messages",LlmTraceSerializer.messagesToArray(messages));
         input.set("request_parameters",client.requestParameters(null));
         long start=System.nanoTime();
         ChatResponse response;
-        try { response=client.chat(List.copyOf(messages),null); }
+        try { response=budget==null?client.chat(List.copyOf(messages),null):com.cexpilot.runtime.QueryBudget.invoke(()->client.chat(List.copyOf(messages),null));
+            if(budget!=null)budget.observe(response); }
         catch (RuntimeException error) {
             usages.add(LlmUsage.of("normal",config.getNormal(),null));
             sink.record(TraceEvent.llmCall(traceId,stage,input.toString(),LlmTraceSerializer.failureToJson(error),(System.nanoTime()-start)/1_000_000,

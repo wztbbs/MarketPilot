@@ -7,6 +7,8 @@ import com.cexpilot.llm.LlmTraceSerializer;
 import com.cexpilot.llm.LlmUsage;
 import com.cexpilot.prompt.PromptStore;
 import com.cexpilot.runtime.ExecutionResult;
+import com.cexpilot.runtime.ExecutionFailure;
+import com.cexpilot.runtime.TurnCounters;
 import com.cexpilot.runtime.RequestContext;
 import com.cexpilot.runtime.ToolResult;
 import com.cexpilot.runtime.TraceEvent;
@@ -30,7 +32,7 @@ import java.util.Objects;
 import java.util.function.Consumer;
 
 /**
- * DAG 运行时（替代原 ReAct 循环）：一次问答 = DagPlanner 合并调用（领域判断 + 规划）→ DagExecutor 并行执行 → 汇总 evidence → 1 次不带工具的 LLM 调用生成最终回答。
+ * Query 运行时：首轮逻辑计划 → DAG；single 直接回答，adaptive 观察后有界追加计划，最终统一回答。
  *
  * 工具返回的完整 evidence 直接作为回答的 FACTS，不在回答前删除明细；统一按问题与证据适用事实约束。
  * 出域直接返回边界话术；planner 有意不规划且给出 reply（追问/能力缺口）时直接透传为答案；
@@ -54,16 +56,23 @@ public class DagRuntime {
     private final Clock clock;
     // 阶段二：历史事实存取；null 时跳过事实保存与 REUSE_FACT 绑定（单轮旧行为）
     private final com.cexpilot.evidence.EvidenceStore evidenceStore;
+    private final com.cexpilot.config.QueryExecutionConfig queryConfig;
 
     public DagRuntime(LlmClient llm, DagPlanner planner, DagExecutor executor, PromptStore prompts,
                       Clock clock) {
         this(llm, planner, executor, prompts, clock, null);
     }
 
-    @org.springframework.beans.factory.annotation.Autowired
     public DagRuntime(@org.springframework.beans.factory.annotation.Qualifier(com.cexpilot.config.LlmClientConfig.NORMAL_LLM_CLIENT) LlmClient llm,
                       DagPlanner planner, DagExecutor executor, PromptStore prompts,
                       Clock clock, com.cexpilot.evidence.EvidenceStore evidenceStore) {
+        this(llm,planner,executor,prompts,clock,evidenceStore,new com.cexpilot.config.QueryExecutionConfig());
+    }
+    @org.springframework.beans.factory.annotation.Autowired
+    public DagRuntime(@org.springframework.beans.factory.annotation.Qualifier(com.cexpilot.config.LlmClientConfig.NORMAL_LLM_CLIENT) LlmClient llm,
+            DagPlanner planner,DagExecutor executor,PromptStore prompts,Clock clock,com.cexpilot.evidence.EvidenceStore evidenceStore,
+            com.cexpilot.config.QueryExecutionConfig queryConfig) {
+        this.queryConfig=queryConfig;
         this.llm = llm;
         this.planner = planner;
         this.executor = executor;
@@ -141,6 +150,13 @@ public class DagRuntime {
                                    Consumer<com.cexpilot.metric.CompiledPlan> compiledPlanSink,
                                    com.cexpilot.conversation.PlannerInput plannerInput,
                                    com.cexpilot.evidence.EvidenceSession evidenceSession) {
+        try(var scope=com.cexpilot.runtime.QueryBudget.open(queryConfig)) {
+            return executeBudgeted(question,conversationContext,traceId,sink,answerDelta,requestContext,progress,compiledPlanSink,plannerInput,evidenceSession);
+        }
+    }
+    private ExecutionResult executeBudgeted(String question,String conversationContext,String traceId,TraceSink sink,Consumer<String> answerDelta,
+            RequestContext requestContext,Consumer<String> progress,Consumer<com.cexpilot.metric.CompiledPlan> compiledPlanSink,
+            com.cexpilot.conversation.PlannerInput plannerInput,com.cexpilot.evidence.EvidenceSession evidenceSession) {
         RequestContext effectiveContext = resolveRequestContext(requestContext);
         ObjectNode timeContext = answerTimeContext(effectiveContext,
                 requestContext != null && requestContext.userZone() != null);
@@ -229,130 +245,171 @@ public class DagRuntime {
             String missing = outcome.reply();
             queryStatus.put("missing", missing.length() <= 200 ? missing : missing.substring(0, 200));
         }
-        DagPlan plan = outcome.plan().orElseThrow().dagPlan();
-        com.cexpilot.metric.ExecutionBindings bindings = outcome.bindings();
-        if (compiledPlanSink != null) {
-            compiledPlanSink.accept(outcome.plan().orElseThrow());
-        }
-        emit(progress, "执行计划已生成（" + plan.nodes().size() + " 项查询），正在获取数据…");
-        boolean answerAttempted = false;
-        Map<String, String> savedFactIds = new java.util.HashMap<>();
-        List<String> newFactIds = new ArrayList<>();
-        int reusedFactCount = 0;
-        int metricFetchCount = 0;
-        int calculationCount = 0;
+        var compiled=outcome.plan().orElseThrow();
+        var bindings=outcome.bindings();
+        var budget=com.cexpilot.runtime.QueryBudget.current();
+        boolean answerAttempted=false;
+        Map<String,String> savedFactIds=new java.util.LinkedHashMap<>();
+        List<String> newFactIds=new ArrayList<>();
+        Map<String,ToolResult> results=new java.util.LinkedHashMap<>();
+        int reusedFactCount=0,metricFetchCount=0,calculationCount=0,httpRequests=0;
+        int continuationCalls=0,addedRounds=0;
+        String stopReason="SINGLE";
+        String turnStatus=null,clarify=null;
+        List<ClarificationField> fields=List.of();
+        boolean partial=outcome.reply()!=null && !outcome.reply().isBlank();
+        if(compiledPlanSink!=null)compiledPlanSink.accept(compiled);
         try {
-            DagExecutor.ExecutionOutcome execution = executor.execute(plan, traceId, sink, effectiveContext, bindings);
-            emit(progress, "数据获取完毕，正在组装答案…");
-            steps = execution.layers();
-            for (PlanNode node : plan.nodes()) {
-                ToolResult result = execution.context().get(node.id());
-                if (result == null) {
-                    continue;
-                }
-                toolCallCount++;
-                boolean reusedNode = bindings != null && bindings.reuseFor(node.id()) != null;
-                // 计数拆分（阶段三）：REUSE_FACT 节点不算真实取数；算子节点只在真正执行时计数
-                // （4.3 口径：上游失败被跳过的节点不计数）
-                if (node.metric() != null && !reusedNode) {
-                    metricFetchCount++;
-                } else if (node.metric() == null && result.ok()) {
-                    calculationCount++;
-                }
-                // 事实保存在 Answer 之前：即使 Answer 失败，本轮已取事实也已落库（F13）
-                if (evidenceSession != null && evidenceStore != null) {
-                    Map<String, String> saved = saveFacts(outcome.plan().orElseThrow(), node, result, bindings,
-                            savedFactIds, evidenceSession, traceId, effectiveContext.requestTime());
-                    savedFactIds.putAll(saved);
-                    if (!reusedNode) {
-                        // REUSE_FACT 沿用历史 factId，不算本轮新保存
-                        newFactIds.addAll(saved.values());
+            boolean execute=true;
+            int decisions=0;
+            while(true) {
+                if(execute) {
+                    var previous=new java.util.HashSet<>(results.keySet());
+                    var nodes=newNodesInDependencyOrder(compiled.dagPlan(),previous);
+                    budget.admitTools(nodes.size());
+                    emit(progress,addedRounds==0?"执行计划已生成（"+nodes.size()+" 项查询），正在获取数据…":"正在执行补充计划（"+nodes.size()+" 项查询或计算）…");
+                    var execution=executor.executeIncremental(compiled.dagPlan(),traceId,sink,effectiveContext,bindings,results,budget);
+                    httpRequests+=execution.httpRequests();steps+=execution.layers();
+                    for(var node:nodes) {
+                        var result=execution.context().get(node.id());if(result==null)continue;
+                        results.put(node.id(),result);toolCallCount++;
+                        boolean reused=bindings!=null && bindings.reuseFor(node.id())!=null;
+                        if(node.metric()!=null && !reused)metricFetchCount++;
+                        else if(node.metric()==null && result.ok())calculationCount++;
+                        if(evidenceSession!=null && evidenceStore!=null) {
+                            var saved=saveFacts(compiled,node,result,bindings,savedFactIds,evidenceSession,traceId,effectiveContext.requestTime());
+                            savedFactIds.putAll(saved);if(!reused)newFactIds.addAll(saved.values());
+                        }
+                        appendEvidence(evidence,node,result,bindings,savedFactIds);
+                        ((ObjectNode)evidence.get(evidence.size()-1)).put("execution_round",addedRounds);
+                        if(reused && result.ok())reusedFactCount++;
+                        if(!result.ok() || result.data()!=null && (result.data().has("sample_complete") && !result.data().path("sample_complete").asBoolean()
+                                || result.data().at("/coverage/range_complete").isBoolean() && !result.data().at("/coverage/range_complete").asBoolean()))partial=true;
+                    }
+                    traceIteration(sink,traceId,"EXECUTED",compiled,question,budget.snapshot(),null);
+                    if(addedRounds>0 && nodes.stream().map(n->results.get(n.id())).noneMatch(DagRuntime::usableResult)) {
+                        stopReason="NO_PROGRESS";partial=true;break;
                     }
                 }
-                appendEvidence(evidence, node, result, bindings, savedFactIds);
-                if (reusedNode && result.ok()) {
-                    reusedFactCount++;
+                if(!outcome.adaptive())break;
+                if(!queryConfig.isAdaptiveEnabled() || !budget.config().isAdaptiveEnabled()){stopReason="ADAPTIVE_DISABLED";partial=true;break;}
+                if(decisions++>budget.config().getMaxContinuations()){stopReason="CONTINUATION_LIMIT";partial=true;break;}
+                emit(progress,"正在检查已有结果，决定是否补充查询或计算…");
+                com.cexpilot.llm.ChatResponse response;
+                int before=usages.size();
+                try {response=planner.observe(question,compiled,evidence,queryStatus,effectiveContext,traceId,sink,usages);}
+                finally {continuationCalls+=usages.size()-before;}
+                try {
+                    if(response.hasToolCalls())throw new IllegalArgumentException("后续规划不能直接调用工具");
+                    var decision=com.cexpilot.agent.PlanningJson.parse(response.content());
+                    com.cexpilot.agent.PlanningJson.object(decision,java.util.Set.of("action","reason","plan","completion","clarify"),"后续规划");
+                    String action=com.cexpilot.agent.PlanningJson.text(decision,"action",20);
+                    String reason=com.cexpilot.agent.PlanningJson.text(decision,"reason",200);
+                    traceIteration(sink,traceId,action,compiled,question,decision,null);
+                    if("finish".equals(action)) {
+                        if(decision.hasNonNull("plan") || decision.hasNonNull("clarify"))throw new IllegalArgumentException("结束不能同时提出计划或澄清");
+                        String claim=com.cexpilot.agent.PlanningJson.text(decision,"completion",12);
+                        if(!java.util.Set.of("complete","partial").contains(claim))throw new IllegalArgumentException("completion 只能 complete/partial");
+                        queryStatus.put("model_completion_claim",claim).put("model_note",reason);
+                        partial|="partial".equals(claim) || queryStatus.has("last_validation_error");stopReason="MODEL_FINISH";break;
+                    }
+                    if("clarify".equals(action)) {
+                        if(decision.hasNonNull("plan"))throw new IllegalArgumentException("澄清不能同时提出计划");
+                        fields=ClarificationField.parse(decision.path("clarify"));
+                        if(fields.isEmpty())throw new IllegalArgumentException("澄清必须提供有效字段");
+                        clarify=ClarificationField.question(fields);turnStatus="NEEDS_CLARIFICATION";stopReason="CLARIFY";partial=true;break;
+                    }
+                    if(!"continue".equals(action))throw new IllegalArgumentException("未知后续动作");
+                    if(addedRounds>=budget.config().getMaxContinuations()){stopReason="CONTINUATION_LIMIT";partial=true;break;}
+                    var next=planner.compileContinuation(compiled,decision.path("plan"),question,effectiveContext);
+                    compiled=next;addedRounds++;execute=true;queryStatus.remove("last_validation_error");
+                    if(compiledPlanSink!=null)compiledPlanSink.accept(compiled);
+                } catch(IllegalArgumentException invalid) {
+                    traceIteration(sink,traceId,"REJECTED",compiled,question,null,invalid.getMessage());
+                    queryStatus.put("last_validation_error",invalid.getMessage());execute=false;
+                    if(invalid.getMessage()!=null && invalid.getMessage().contains("NO_PROGRESS")){stopReason="NO_PROGRESS";partial=true;break;}
                 }
             }
-            String userContent = question + "\n\n<FACTS>\n" + evidence + "\n</FACTS>\n<QUERY_STATUS>\n"
-                    + queryStatus + "\n</QUERY_STATUS>";
-
-            String systemPrompt = prompts.render(ANSWER_PROMPT_NAME, Map.of(
-                    "time_context", timeContext.toString(),
-                    "conversation_context", conversationContext == null ? "" : conversationContext));
-            List<ChatMessage> messages = new ArrayList<>();
-            messages.add(ChatMessage.system(systemPrompt));
-            messages.add(ChatMessage.user(userContent));
-            answerAttempted = true;
-            ChatResponse answer = callAnswerLlm(messages, traceId, sink, answerDelta, timeContext, usages);
-            totalPromptTokens += answer.promptTokens() == null ? 0 : answer.promptTokens();
-            totalCompletionTokens += answer.completionTokens() == null ? 0 : answer.completionTokens();
-
-            return new ExecutionResult(answer.content(), evidence, toolCallCount, steps,
-                    totalPromptTokens, totalCompletionTokens, null, null, reusedFactCount,
-                    plannerLlmCalls, 1, metricFetchCount, calculationCount, execution.httpRequests(),
-                    newFactIds).withTaskScope(outcome.taskScope()).withLlmUsages(usages);
-        } catch (Exception e) {
-            // 4.3：失败不等于统计归零——把已发生的调用计数与已保存事实随异常带出，
-            // 编排层失败路径据此落 trace，耗时/成本分析才有完整口径
-            throw new ExecutionFailure(e, new TurnCounters(plannerLlmCalls, answerAttempted ? 1 : 0,
-                    metricFetchCount, calculationCount, 0, reusedFactCount, List.copyOf(newFactIds))
-                    .withLlmUsages(usages), outcome.taskScope(), evidence);
+        } catch(com.cexpilot.runtime.QueryBudget.Exhausted exhausted) {
+            stopReason=exhausted.reason;partial=true;
+        } catch(Exception failure) {
+            throw new ExecutionFailure(failure,new TurnCounters(plannerLlmCalls+continuationCalls,0,metricFetchCount,calculationCount,httpRequests,reusedFactCount,newFactIds)
+                    .withLlmUsages(usages),outcome.taskScope(),evidence);
+        }
+        queryStatus.put("stop_reason",stopReason).put("execution_status",partial?"PARTIAL":"FINISHED");
+        queryStatus.set("budget",budget.snapshot());
+        traceIteration(sink,traceId,"STOP",compiled,question,queryStatus,null);
+        try {
+            String answerText;
+            var streamed=new StringBuffer();
+            Consumer<String> trackedDelta=answerDelta==null?null:delta->{streamed.append(delta);answerDelta.accept(delta);};
+            if(clarify!=null)answerText=clarify;
+            else {
+                String userContent=question+"\n\n<FACTS>\n"+evidence+"\n</FACTS>\n<QUERY_STATUS>\n"+queryStatus+"\n</QUERY_STATUS>";
+                var systemPrompt=prompts.render(ANSWER_PROMPT_NAME,Map.of("time_context",timeContext.toString(),"conversation_context",conversationContext==null?"":conversationContext));
+                var messages=List.of(ChatMessage.system(systemPrompt),ChatMessage.user(userContent));
+                try {
+                    budget.beforeModel(false);answerAttempted=true;
+                    emit(progress,"执行已结束，正在根据证据生成回答…");
+                    answerText=callAnswerLlm(messages,traceId,sink,trackedDelta,timeContext,usages).content();
+                } catch(com.cexpilot.runtime.QueryBudget.Exhausted exhausted) {
+                    stopReason=exhausted.reason;partial=true;
+                    queryStatus.put("stop_reason",stopReason).put("execution_status","PARTIAL");
+                    String suffix=(streamed.isEmpty()?"":"\n\n")+"本次查询因执行预算或时间限制结束，任务尚未完整完成；已取得的结果和缺口保留在本次记录中。";
+                    answerText=streamed+suffix;
+                    if(answerDelta!=null)answerDelta.accept(suffix);
+                    traceIteration(sink,traceId,"STOP",compiled,question,queryStatus,null);
+                }
+            }
+            if(clarify!=null && answerDelta!=null)answerDelta.accept(answerText);
+            queryStatus.set("budget",budget.snapshot());
+            traceIteration(sink,traceId,"FINAL",compiled,question,queryStatus,null);
+            var result=new ExecutionResult(answerText,evidence,toolCallCount,steps,LlmUsage.knownPromptTokens(usages),LlmUsage.knownCompletionTokens(usages),turnStatus,clarify,
+                    reusedFactCount,plannerLlmCalls+continuationCalls,answerAttempted?1:0,metricFetchCount,calculationCount,httpRequests,newFactIds)
+                    .withTaskScope(outcome.taskScope()).withLlmUsages(usages);
+            if(outcome.adaptive() || partial) {
+                var payload=MAPPER.createObjectNode().put("status",clarify==null?"SUCCEEDED":"NEEDS_CLARIFICATION");
+                payload.set("execution",queryStatus);
+                if(!fields.isEmpty())payload.set("clarify",MAPPER.valueToTree(fields));
+                result=result.withAgent("query",payload);
+            }
+            return result;
+        } catch(Exception failure) {
+            throw new ExecutionFailure(failure,new TurnCounters(plannerLlmCalls+continuationCalls,answerAttempted?1:0,metricFetchCount,calculationCount,httpRequests,reusedFactCount,newFactIds)
+                    .withLlmUsages(usages),outcome.taskScope(),evidence);
         }
     }
 
-    /** 失败路径的调用/事实计数快照（4.3）。answerLlmCalls 为尝试次数（1=已发起）。 */
-    public record TurnCounters(int plannerLlmCalls, int answerLlmCalls, int metricFetchCount,
-                               int calculationCount, int httpRequestCount, int reusedFactCount,
-                               List<String> savedFactIds, List<LlmUsage> llmUsages,int routerLlmCalls) {
-
-        public TurnCounters(int plannerLlmCalls,int answerLlmCalls,int metricFetchCount,int calculationCount,
-                int httpRequestCount,int reusedFactCount,List<String> savedFactIds,List<LlmUsage> usages) {
-            this(plannerLlmCalls,answerLlmCalls,metricFetchCount,calculationCount,httpRequestCount,reusedFactCount,savedFactIds,usages,0);
+    /** 事实按依赖顺序保存；模型的 calculations 列表顺序不代表执行顺序。 */
+    private static List<PlanNode> newNodesInDependencyOrder(DagPlan plan,java.util.Set<String> existing) {
+        var ready=new java.util.HashSet<>(existing);
+        var pending=new ArrayList<>(plan.nodes().stream().filter(n->!existing.contains(n.id())).toList());
+        var ordered=new ArrayList<PlanNode>();
+        while(!pending.isEmpty()) {
+            int before=pending.size();
+            var iterator=pending.iterator();
+            while(iterator.hasNext()) {
+                var node=iterator.next();
+                if(ready.containsAll(node.dependsOn())) {ordered.add(node);ready.add(node.id());iterator.remove();}
+            }
+            if(before==pending.size())throw new IllegalStateException("累积计划包含未满足的依赖或环");
         }
-
-        public TurnCounters(int plannerLlmCalls, int answerLlmCalls, int metricFetchCount,
-                int calculationCount, int httpRequestCount, int reusedFactCount, List<String> savedFactIds) {
-            this(plannerLlmCalls, answerLlmCalls, metricFetchCount, calculationCount, httpRequestCount,
-                    reusedFactCount, savedFactIds, null);
-        }
-
-        public TurnCounters withLlmUsages(List<LlmUsage> usages) {
-            return new TurnCounters(plannerLlmCalls, answerLlmCalls, metricFetchCount, calculationCount,
-                    httpRequestCount, reusedFactCount, savedFactIds, usages,routerLlmCalls);
-        }
-
-        public TurnCounters withRouterUsages(List<LlmUsage> routing) {
-            var combined=new ArrayList<>(routing);
-            if(llmUsages!=null) combined.addAll(llmUsages);
-            else if(plannerLlmCalls+answerLlmCalls>0) combined.add(new LlmUsage("unknown",null,null,null,null));
-            return new TurnCounters(plannerLlmCalls,answerLlmCalls,metricFetchCount,calculationCount,httpRequestCount,
-                    reusedFactCount,savedFactIds,combined,routing.size());
-        }
-
-        public TurnCounters {
-            savedFactIds = savedFactIds == null ? List.of() : List.copyOf(savedFactIds);
-            llmUsages = llmUsages == null ? null : List.copyOf(llmUsages);
-        }
+        return ordered;
     }
 
-    /** 包装执行期异常并携带 {@link TurnCounters}；编排层解包后用原始异常落 trace。 */
-    public static final class ExecutionFailure extends RuntimeException {
+    private static boolean usableResult(ToolResult result) {
+        if(result==null || !result.ok() || result.data()==null)return false;
+        var data=result.data();
+        return !(data.has("sample_complete") && !data.path("sample_complete").asBoolean())
+                && !(data.at("/coverage/range_complete").isBoolean() && !data.at("/coverage/range_complete").asBoolean())
+                && !data.hasNonNull("statistics_omitted");
+    }
 
-        public final TurnCounters counters;
-        public final com.cexpilot.conversation.TaskScope taskScope;
-        public final JsonNode evidence;
-
-        public ExecutionFailure(Throwable cause, TurnCounters counters) { this(cause, counters, null); }
-        public ExecutionFailure(Throwable cause, TurnCounters counters, com.cexpilot.conversation.TaskScope taskScope) {
-            this(cause, counters, taskScope, null);
-        }
-        public ExecutionFailure(Throwable cause, TurnCounters counters, com.cexpilot.conversation.TaskScope taskScope, JsonNode evidence) {
-            super(cause.getMessage(), cause);
-            this.counters = counters;
-            this.taskScope = taskScope;
-            this.evidence = evidence == null ? null : evidence.deepCopy();
-        }
+    private static void traceIteration(TraceSink sink,String traceId,String action,com.cexpilot.metric.CompiledPlan compiled,
+            String question,JsonNode details,String error) {
+        var event=MAPPER.createObjectNode().put("action",action).put("original_question",question);
+        event.set("cumulative_plan",compiled.logicalPlanJson());if(details!=null)event.set("details",details);
+        sink.record(new TraceEvent(traceId,"QUERY_ITERATION","query_runtime",null,event.toString(),null,null,null,null,null,error));
     }
 
     /**
@@ -405,10 +462,18 @@ public class DagRuntime {
                                        Consumer<String> answerDelta, ObjectNode timeContext, List<LlmUsage> usages) {
         long start = System.currentTimeMillis();
         boolean received = false;
+        var publishing=new java.util.concurrent.atomic.AtomicBoolean(true);
         try {
-            ChatResponse response = answerDelta == null
+            var budget=com.cexpilot.runtime.QueryBudget.current();
+            Consumer<String> guarded=delta->{
+                synchronized(publishing) {
+                    if(publishing.get() && (budget==null || budget.remainingMs()>0))answerDelta.accept(delta);
+                }
+            };
+            ChatResponse response = com.cexpilot.runtime.QueryBudget.invoke(()->answerDelta == null
                     ? llm.chat(messages, null)
-                    : llm.chatStream(messages, null, answerDelta);
+                    : llm.chatStream(messages, null, guarded));
+            if(budget!=null)budget.observe(response);
             LlmUsage usage = planner.answerUsage(response);
             usages.add(usage);
             received = true;
@@ -427,6 +492,8 @@ public class DagRuntime {
                     answerEventInput(messages, timeContext), LlmTraceSerializer.failureToJson(e),
                     System.currentTimeMillis() - start, null, null, null, null, e.getMessage()));
             throw e;
+        } finally {
+            synchronized(publishing) {publishing.set(false);}
         }
     }
 

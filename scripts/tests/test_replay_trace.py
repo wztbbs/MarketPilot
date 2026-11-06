@@ -206,6 +206,7 @@ class ReplayTraceTest(unittest.TestCase):
         self.assertNotIn("changes", schema["properties"])
         self.assertNotIn("changes", schema["required"])
         self.assertEqual(["set", "reset"], schema["properties"]["condition_updates"]["additionalProperties"]["properties"]["interval"]["enum"])
+        self.assertEqual(["single", "adaptive"], schema["properties"]["execution_mode"]["enum"])
         self.assertFalse(rp.refresh_parameter_protocol(body, "planner"))
 
     def test_missing_key_or_wrong_trace_id_stops_before_llm(self):
