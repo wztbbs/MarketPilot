@@ -50,6 +50,25 @@ public final class InheritanceValidator {
                 + "否则把上述条件恢复为与活动查询状态一致的值";
     }
 
+    /** Program audit: removing a same-exchange branch is not an exchange change. */
+    Set<String> auditChanges(QueryFrame frame, CompiledPlan plan, RequestContext context) {
+        if (frame == null || frame.targets().isEmpty() || context == null) return Set.of();
+        var changes = new TreeSet<>(diffKeys(frame,plan,context));
+        if (frame.targets().size() != plan.targets().size()) {
+            changes.add("targets");
+            for (String field : List.of("exchange","base","metric")) {
+                java.util.function.Function<EffectiveTarget,String> key = switch(field) {
+                    case "exchange" -> EffectiveTarget::exchange;
+                    case "base" -> InheritanceValidator::baseOf;
+                    default -> EffectiveTarget::metric;
+                };
+                if (frame.targets().stream().map(key).collect(java.util.stream.Collectors.toSet())
+                        .equals(plan.targets().stream().map(key).collect(java.util.stream.Collectors.toSet()))) changes.remove(field);
+            }
+        }
+        return changes;
+    }
+
     /**
      * frame vs 本轮计划的实际变化条件键集合（R10 配对对账）：
      * 先按目标节点配对（未变条件优先，再按同所同币种 > 同所 > 同币种匹配），再逐对比较节点内条件；

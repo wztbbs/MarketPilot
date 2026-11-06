@@ -173,8 +173,9 @@ def refresh_parameter_protocol(body, stage, keep_trace_schema=False):
     local = read_json(ROOT / "src/main/resources/metrics/plan-schema.json")
     old = copy.deepcopy(properties)
     properties.pop("explicit_conditions", None)
+    properties.pop("changes", None)
     properties["condition_updates"] = copy.deepcopy(local["properties"]["condition_updates"])
-    schema["required"] = [key for key in schema.get("required", []) if key != "explicit_conditions"]
+    schema["required"] = [key for key in schema.get("required", []) if key not in ("explicit_conditions", "changes")]
     return old != properties
 
 

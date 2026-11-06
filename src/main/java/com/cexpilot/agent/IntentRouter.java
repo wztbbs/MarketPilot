@@ -11,7 +11,9 @@ import java.util.*;
 @Component
 public class IntentRouter {
     public static final String PROMPT="intent_router";
-    public record Decision(String route,String question,List<LlmUsage> usages) {}
+    public record Decision(String route,String question,List<LlmUsage> usages,String resolvedQuestion) {
+        public Decision(String route,String question,List<LlmUsage> usages) { this(route,question,usages,null); }
+    }
     public static class Failure extends RuntimeException {
         public final List<LlmUsage> usages;
         Failure(RuntimeException cause,List<LlmUsage> usages) { super(cause); this.usages=List.copyOf(usages); }
@@ -32,12 +34,21 @@ public class IntentRouter {
                 try {
                     if(response.hasToolCalls()) throw new IllegalArgumentException("路由不能调用工具");
                     var parsed=PlanningJson.parse(response.content());
-                    PlanningJson.object(parsed,Set.of("route","question"),"路由结果");
+                    PlanningJson.object(parsed,Set.of("route","question","resolved_question"),"路由结果");
                     String route=PlanningJson.text(parsed,"route",16);
                     if(!Set.of("query","monitor","clarify").contains(route)) throw new IllegalArgumentException("route 仅支持 query/monitor/clarify");
                     String clarify="clarify".equals(route)?PlanningJson.text(parsed,"question",200):null;
+                    String resolved = null;
+                    if ("query".equals(route)) {
+                        // Missing rewrite is a compatible passthrough, not a reason for another LLM call.
+                        JsonNode rewritten = parsed.path("resolved_question");
+                        resolved = rewritten.isTextual() && !rewritten.asText().isBlank() && rewritten.asText().length() <= 20000
+                                ? rewritten.asText() : question;
+                    } else if (parsed.has("resolved_question")) {
+                        throw new IllegalArgumentException("只有 query 路由可输出 resolved_question");
+                    }
                     sink.record(new TraceEvent(traceId,"ROUTE_DECISION","intent_router",null,parsed.toString(),null,null,null,null,null,null));
-                    return new Decision(route,clarify,List.copyOf(usages));
+                    return new Decision(route,clarify,List.copyOf(usages),resolved);
                 } catch(IllegalArgumentException invalid) {
                     sink.record(new TraceEvent(traceId,"ROUTE_DECISION","intent_router",null,response.content(),null,null,null,null,null,invalid.getMessage()));
                     messages.add(ChatMessage.assistant(response.content()==null?"":response.content(),null));

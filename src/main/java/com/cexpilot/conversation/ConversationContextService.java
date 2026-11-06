@@ -62,6 +62,19 @@ public class ConversationContextService {
                 current != null ? current : frame == null ? null : TaskState.legacy(frame, 0, frame.originalQuestion()));
     }
 
+    /** Router receives semantic query context; fact binding stays with the planner. */
+    public static String rewriteContext(PlannerInput input) {
+        String text = input.contextText() == null ? "" : input.contextText();
+        int history = text.indexOf("【近期问答】");
+        if (history >= 0) text = text.substring(0,history);
+        int facts = text.indexOf("【可引用历史事实】");
+        if (facts >= 0) {
+            int tasks = text.indexOf("【近期任务索引】",facts);
+            text = text.substring(0,facts) + (tasks < 0 ? "" : text.substring(tasks));
+        }
+        return text;
+    }
+
     /** 索引按任务取近期任务并保留最初任务；每项提供最新、最近版本和最初版本。 */
     private List<TaskSnapshot> loadTasks(String conversationId, TaskState current) {
         var byId = new java.util.LinkedHashMap<String, TaskState>();
@@ -381,9 +394,13 @@ public class ConversationContextService {
             s.append("，depth=").append(t.depth()).append('(').append(t.depthOrigin()).append(')');
         }
         s.append("，单位=").append(t.unit()).append("，provider=").append(t.provider());
-        if (!t.conditionSources().isEmpty()) {
-            s.append("，条件来源=").append(new com.fasterxml.jackson.databind.ObjectMapper().valueToTree(t.conditionSources()).toString());
+        // Only fixed-vs-default matters to model planning; the complete lineage stays in storage.
+        var fixed = new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode();
+        for (String field : List.of("interval","include_unclosed","depth","settle")) {
+            var source = t.conditionSources().get(field);
+            if (source != null) fixed.put(field, source.requirementOrigin() == com.cexpilot.metric.ConditionOrigin.EXPLICIT);
         }
+        if (!fixed.isEmpty()) s.append("，固定要求（true=用户固定，false=默认/自动）=").append(fixed);
         if (t.executionMetadata() != null) {
             s.append("，上次执行元数据（只说明上次结果，不是本次固定要求）=").append(t.executionMetadata());
         }

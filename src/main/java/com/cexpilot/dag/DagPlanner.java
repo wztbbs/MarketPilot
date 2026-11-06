@@ -127,7 +127,7 @@ public class DagPlanner {
     }
 
     /**
-     * @param activeFrame    活动 QueryFrame（阶段一 c）；非 null 时与 Planner 声明的 changes/new_frame 做继承对账
+     * @param activeFrame    活动 QueryFrame（阶段一 c）；用于可选参数继承与程序侧变化审计
      * @param requestContext 请求时间上下文；时间条件按消解后的绝对区间对账，需要本请求的基准时间与时区
      */
     public PlanOutcome plan(String question, String conversationContext, String traceId, TraceSink sink,
@@ -558,7 +558,7 @@ public class DagPlanner {
         try {
             com.cexpilot.metric.CompiledPlan compiled =
                     new ConditionProvenanceResolver().resolve(compiler, parsed.path("plan"),
-                            parsed.path("explicit_conditions"), parsed.path("condition_updates"), question, activeFrame, requestContext,
+                            com.fasterxml.jackson.databind.node.MissingNode.getInstance(), parsed.path("condition_updates"), question, activeFrame, requestContext,
                             Math.min(dagConfig.getMaxNodes(), maxToolCalls), warning -> {
                                 log.warn("规划条件标注降级 traceId={} path={} code={}: {}", traceId,
                                         warning.path(), warning.code(), warning.message());
@@ -583,27 +583,12 @@ public class DagPlanner {
             List<String> errors = validator.validate(plan, compiler.allowedTools(), maxToolCalls);
             errors.addAll(new FundingAggregationValidator().check(question, compiled));
             if (errors.isEmpty()) {
-                // 继承对账：NEW 无基准，CONTINUE/RESUME 使用已选择的任务版本。漏报 changes 的第一次先修复教学；修复后仍不声明则
-                // shadow 放行——计划本身已通过全部校验，changes 只是审计元数据，不构成拒绝理由——
-                // 并记 INHERIT_SHADOW 事件供观察模型漏报率。
+                // Changes are derived by the program for audit only, never a repair requirement.
                 if (activeFrame != null) {
-                    String reconciliation = inheritanceValidator.check(activeFrame, compiled,
-                            declaredChanges(parsed), requestContext);
-                    if (reconciliation != null) {
-                        if (attempt <= 1) {
-                            return repairDecision(traceId, sink, parsed.toString(), reconciliation);
-                        }
-                        // §5 结构化：actual_diff（真实差异明细）/ declared_changes / attempt 分开记录，
-                        // 漏报率与逐 case 抽样复核才有可统计口径，而不是只靠 detail 文案
-                        sink.record(new TraceEvent(traceId, "INHERIT_SHADOW", "inheritance_validator",
-                                MAPPER.createObjectNode()
-                                        .put("declared_changes", declaredChanges(parsed).toString())
-                                        .put("actual_diff", inheritanceValidator
-                                                .diffKeys(activeFrame, compiled, requestContext).toString())
-                                        .put("attempt", attempt)
-                                        .put("detail", reconciliation).toString(),
-                                parsed.toString(), null, null, null, null, null, null));
-                    }
+                    var actualChanges = inheritanceValidator.auditChanges(activeFrame, compiled, requestContext);
+                    sink.record(new TraceEvent(traceId,"QUERY_DIFF","inheritance_validator",null,
+                            MAPPER.createObjectNode().set("actual_changes",MAPPER.valueToTree(actualChanges)).toString(),
+                            null,null,null,null,null,null));
                 }
                 sink.record(TraceEvent.plan(traceId, parsed.toString(), null));
                 sink.record(new TraceEvent(traceId, "PLAN_COMPILED", "metric_compiler",
@@ -655,21 +640,7 @@ public class DagPlanner {
         return repairDecision(traceId, sink, parsed.toString(), error);
     }
 
-    /** 协议增量字段 changes：字符串数组，缺省/非法按空数组（旧行为）处理。 */
-    private static java.util.Set<String> declaredChanges(JsonNode parsed) {
-        java.util.Set<String> changes = new java.util.LinkedHashSet<>();
-        JsonNode node = parsed.path("changes");
-        if (node.isArray()) {
-            for (JsonNode item : node) {
-                if (item.isTextual()) {
-                    changes.add(item.asText());
-                }
-            }
-        }
-        return changes;
-    }
-
-    /** FOLLOWUP_PLAN 事件的 output_json：各 metric 节点口径 + 绑定决策（FETCH/REUSE_FACT+factId）+ changes/new_frame 声明。 */
+    /** FOLLOWUP_PLAN 事件的 output_json：各 metric 节点口径 + 绑定决策（FETCH/REUSE_FACT+factId）+ 程序侧任务元数据。 */
     private static String followupPlanSummary(JsonNode parsed, com.cexpilot.metric.CompiledPlan compiled,
                                               com.cexpilot.metric.ExecutionBindings bindings) {
         ObjectNode out = MAPPER.createObjectNode();
@@ -702,7 +673,6 @@ public class DagPlanner {
         for (com.cexpilot.metric.CalculationRequest c : compiled.logicalPlan().calculations()) {
             calculations.addObject().put("id", c.id()).put("operator", c.operator());
         }
-        declaredChanges(parsed).forEach(out.putArray("changes")::add);
         out.put("new_frame", parsed.path("new_frame").asBoolean(false));
         return out.toString();
     }

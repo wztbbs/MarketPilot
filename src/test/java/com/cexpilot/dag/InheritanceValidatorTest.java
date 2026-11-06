@@ -23,6 +23,7 @@ import java.util.Set;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 /**
  * 继承对账（阶段一 c）：计划与活动 frame 的实际 diff 必须 ⊆ Planner 声明的 changes。
@@ -66,6 +67,13 @@ class InheritanceValidatorTest {
 
     private static final String YESTERDAY =
             "{\"type\":\"calendar_period\",\"unit\":\"day\",\"offset\":-1,\"segment\":\"full\",\"extent\":\"full_period\"}";
+
+    @Test void auditDoesNotCallRemovingASameExchangeBranchAnExchangeChange() throws Exception {
+        var t=target("binance","BTC","price.high",YESTERDAY,"1h");
+        var changes=validator.auditChanges(frame(t,t),plan(t,YESTERDAY),new RequestContext(SH,T1));
+        assertTrue(changes.contains("targets"));
+        assertFalse(changes.contains("exchange"));assertFalse(changes.contains("base"));assertFalse(changes.contains("metric"));
+    }
 
     @Test
     void 无活动frame或frame无targets时放行() throws Exception {

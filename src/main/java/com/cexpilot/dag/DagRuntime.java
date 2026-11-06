@@ -155,7 +155,12 @@ public class DagRuntime {
         emit(progress, "正在生成执行计划…");
         DagPlanner.PlanOutcome outcome;
         try {
-            outcome = planner.plan(question, plannerContext, traceId, sink,
+            String plannerQuestion = plannerInput != null && plannerInput.resolvedQuestion() != null
+                    ? plannerInput.resolvedQuestion() : question;
+            if (plannerInput != null && plannerInput.resolvedQuestion() != null) {
+                plannerContext = plannerContext + "\n【本轮原始输入】（仅用于任务延续和本轮参数操作识别；规划目标以完整查询为准）\n" + question;
+            }
+            outcome = planner.plan(plannerQuestion, plannerContext, traceId, sink,
                     activeFrame, effectiveContext, evidenceContext,
                     plannerInput == null ? List.of() : plannerInput.tasks(),
                     plannerInput == null ? null : plannerInput.currentTask(),

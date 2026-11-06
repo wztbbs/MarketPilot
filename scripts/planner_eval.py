@@ -474,9 +474,6 @@ def protocol_errors(envelope):
             errors.append(flag + " 必须为 boolean 或 null")
     if envelope.get("clarify") is not None and not isinstance(envelope["clarify"], str):
         errors.append("clarify 必须为 string 或 null")
-    changes = envelope.get("changes")
-    if changes is not None and (not isinstance(changes, list) or any(not isinstance(v, str) for v in changes)):
-        errors.append("changes 必须为字符串数组或 null")
     plan = envelope.get("plan")
     if envelope.get("in_domain") is False and plan is not None and not _is_empty_plan(plan):
         errors.append("in_domain=false 时 plan 必须为空（null 或无取数无计算的空对象）")

@@ -56,7 +56,14 @@ public class AgentDispatcher {
         selectedAgent.accept(decision.route());
         if("query".equals(decision.route())) {
             try {
-                return query.execute(question,history,traceId,sink,delta,request,progress,compiledPlanSink,queryInput(input,routingState),session)
+                PlannerInput queryInput = queryInput(input,routingState);
+                if (queryInput == null) queryInput = new PlannerInput("",null);
+                queryInput = queryInput.withResolvedQuestion(decision.resolvedQuestion());
+                var rewrite = JSON.createObjectNode().put("original_question",question)
+                        .put("resolved_question",decision.resolvedQuestion())
+                        .put("changed",!Objects.equals(question,decision.resolvedQuestion()));
+                sink.record(new TraceEvent(traceId,"QUERY_REWRITE","intent_router",null,rewrite.toString(),null,null,null,null,null,null));
+                return query.execute(question,history,traceId,sink,delta,request,progress,compiledPlanSink,queryInput,session)
                         .withRouterUsages(decision.usages());
             } catch(DagRuntime.ExecutionFailure failure) {
                 throw new DagRuntime.ExecutionFailure(failure.getCause(),failure.counters.withRouterUsages(decision.usages()),failure.taskScope,failure.evidence);
@@ -130,6 +137,7 @@ public class AgentDispatcher {
                 target.set("instrument",t.instrument()); target.set("time",t.timeExpression());
             });
         }
+        if (input != null) task.put("query_context",com.cexpilot.conversation.ConversationContextService.rewriteContext(input));
         result.put("timezone",request.userZone().getId()).put("request_time",request.requestTime().toString());
         return result;
     }
@@ -139,7 +147,15 @@ public class AgentDispatcher {
         var monitor=JSON.createObjectNode();
         JsonNode prior=full.path("monitor_context");
         for(String key:List.of("last_question","last_reply","status")) if(prior.has(key)) monitor.set(key,prior.get(key));
-        if(prior.has("candidate")) monitor.set("conditions",prior.at("/candidate/monitor/conditions"));
+        if(prior.has("candidate")) {
+            monitor.set("conditions",prior.at("/candidate/monitor/conditions"));
+            var targets = monitor.putArray("targets");
+            for (var metric : prior.at("/candidate/plan/metrics")) {
+                var target = targets.addObject();
+                target.set("instrument",metric.path("instrument"));
+                target.set("exchanges",metric.path("exchanges"));
+            }
+        }
         if(prior.has("confirmation")) monitor.put("draft_status",prior.at("/confirmation/status").asText());
         result.set("monitor_context",monitor); return result;
     }

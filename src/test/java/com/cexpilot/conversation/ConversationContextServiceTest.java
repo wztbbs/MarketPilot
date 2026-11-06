@@ -48,6 +48,29 @@ class ConversationContextServiceTest {
         return new QueryRecord(1, q, a, "trace-1", LocalDateTime.of(2026, 10, 11, 9, 26));
     }
 
+    @Test void compactContextKeepsFixedRequirementsWithoutFullProvenanceChain() throws Exception {
+        var frame=sampleFrame();var target=frame.targets().get(0);
+        var source=com.cexpilot.metric.ConditionSource.of(ConditionOrigin.EXPLICIT)
+                .identify("PRIVATE_SOURCE_TURN","PRIVATE_SOURCE_FRAME",3);
+        target=target.withMetadata(java.util.Map.of("interval",source),null);
+        var compactFrame=new QueryFrame(frame.frameId(),frame.conversationId(),frame.version(),frame.sourceTurnId(),
+                frame.originalQuestion(),frame.requestTime(),frame.timezone(),List.of(target),null,null,null);
+        when(repository.findActiveFrameJson("conv-1")).thenReturn(compactFrame.toJson());
+        when(repository.recentQueries("conv-1",5)).thenReturn(List.of());
+        var input=service.buildPlannerInput("conv-1");
+        assertTrue(input.contextText().contains("\"interval\":true"));
+        assertFalse(input.contextText().contains("PRIVATE_SOURCE_TURN"));
+        assertFalse(input.contextText().contains("requirementVersion"));
+        assertEquals("PRIVATE_SOURCE_TURN",input.activeFrame().targets().get(0).conditionSources().get("interval").sourceTurnId());
+    }
+
+    @Test void rewriteContextKeepsTasksButOmitsDuplicateDialogueAndFactCatalogue() {
+        var input=new PlannerInput("当前条件\n【可引用历史事实】秘密事实目录\n【近期任务索引】历史任务\n【近期问答】重复答案",null);
+        String text=ConversationContextService.rewriteContext(input);
+        assertTrue(text.contains("当前条件"));assertTrue(text.contains("历史任务"));
+        assertFalse(text.contains("秘密事实目录"));assertFalse(text.contains("重复答案"));
+    }
+
     @Test
     void 有frame时分层注入结构化条件与文本历史() throws Exception {
         when(repository.findActiveFrameJson("conv-1")).thenReturn(sampleFrame().toJson());

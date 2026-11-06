@@ -70,7 +70,7 @@ class DagPlannerTest {
             "{\"m1\":{\"exchange\":\"币安\",\"market_type\":\"永续\",\"quote\":\"USDT\",\"time\":\"现在\"}}",
             "{\"m1\":{\"exchange\":\"币安\",\"metric\":\"现价\",\"query_shape\":\"当前\"}}",
             "{\"m1\":{\"exchange\":\"币安\",\"metric\":\"多少钱\",\"query_shape\":\"现在\",\"time\":\"现在\"}}"})
-    void historicalSnapshotSourceMistakesCompileOnFirstAttemptWithWarnings(String claims) {
+    void legacySourceMetadataIsIgnoredWithoutRepair(String claims) {
         var query = metric("m1", "price.last", "snapshot", "binance"); query.remove(List.of("time", "interval"));
         var output = (ObjectNode) json(envelope(plan(query)));
         output.set("explicit_conditions", json(claims)); output.put("task_action", "NEW");
@@ -80,7 +80,7 @@ class DagPlannerTest {
         var result = planner(llm, registry(), config).plan("币安的比特币现在多少钱？", "", "test", events::add);
         assertTrue(result.plan().isPresent(), result.lastError());
         assertEquals(1, result.llmCalls()); assertEquals(1, llm.calls.size());
-        assertTrue(events.stream().anyMatch(e -> "CONDITION_WARNING".equals(e.eventType())));
+        assertFalse(events.stream().anyMatch(e -> "CONDITION_WARNING".equals(e.eventType())));
         assertEquals("EXECUTABLE", json(events.stream().filter(e -> "PLANNER_ATTEMPT".equals(e.eventType())).findFirst().orElseThrow().outputJson()).path("result").asText());
         var target = result.plan().orElseThrow().targets().get(0);
         assertEquals("BTC", target.instrument().path("base").asText());
@@ -108,6 +108,7 @@ class DagPlannerTest {
         planner(llm, registry(), config).plan("问题", "", "test", e -> {});
         var schema = llm.format.at("/json_schema/schema");
         assertFalse(schema.path("properties").has("explicit_conditions"));
+        assertFalse(schema.path("properties").has("changes"));
         var fields = schema.at("/properties/condition_updates/additionalProperties/properties");
         assertEquals(4, fields.size());
         for (String field : List.of("interval", "include_unclosed", "depth", "settle"))
@@ -393,7 +394,7 @@ class DagPlannerTest {
             new com.cexpilot.runtime.RequestContext(java.time.ZoneId.of("Asia/Shanghai"),
                     java.time.Instant.parse("2026-10-12T00:00:00Z"));
 
-    @Test void 继承对账漏报changes先修复教学_模型补声明后放行() {
+    @Test void 合法追问未声明changes首轮执行并记录程序差异() {
         var low = plan(metric("m1", "price.low", "range_statistic", "binance"));
         var declared = JSON.createObjectNode();
         declared.put("in_domain", true).putNull("reply");
@@ -406,12 +407,12 @@ class DagPlannerTest {
                 .plan("最低价呢？", "", "test", events::add, priceHighFrame(), FOLLOWUP_CTX);
 
         assertTrue(result.plan().isPresent(), result.lastError());
-        assertEquals(2, llm.calls.size());
-        assertTrue(llm.calls.get(1).get(3).content().contains("changes"), "修复消息要教模型怎么补声明");
+        assertEquals(1, llm.calls.size());
+        assertTrue(events.stream().anyMatch(e -> "QUERY_DIFF".equals(e.eventType()) && e.outputJson().contains("metric")));
         assertTrue(events.stream().noneMatch(e -> "INHERIT_SHADOW".equals(e.eventType())));
     }
 
-    @Test void 漏报changes修复仍不声明时第二次shadow放行并记事件() {
+    @Test void 合法计划不再因审计字段漏报进入修复() {
         var undeclared = envelope(plan(metric("m1", "price.low", "range_statistic", "binance")));
         var llm = new Script(undeclared, undeclared); // 模型两次都不声明（线上实测 qwen-plus 行为）
         List<TraceEvent> events = new ArrayList<>();
@@ -420,10 +421,9 @@ class DagPlannerTest {
                 .plan("最低价呢？", "", "test", events::add, priceHighFrame(), FOLLOWUP_CTX);
 
         assertTrue(result.plan().isPresent(), "计划本身合法，不得因漏报审计元数据而拒答: " + result.lastError());
-        assertEquals(2, llm.calls.size());
-        var shadow = events.stream().filter(e -> "INHERIT_SHADOW".equals(e.eventType())).toList();
-        assertEquals(1, shadow.size());
-        assertTrue(shadow.get(0).inputJson().contains("metric"));
+        assertEquals(1, llm.calls.size());
+        assertEquals(0,events.stream().filter(e -> "INHERIT_SHADOW".equals(e.eventType())).count());
+        assertEquals(1,events.stream().filter(e -> "QUERY_DIFF".equals(e.eventType())).count());
     }
 
     @Test void 已填写的无效值仍可纠错且不按key过滤() {

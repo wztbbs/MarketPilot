@@ -185,16 +185,6 @@
         "calculations"
       ]
     },
-    "changes": {
-      "type": [
-        "array",
-        "null"
-      ],
-      "items": {
-        "type": "string"
-      },
-      "description": "用户本轮明确改变的条件键；无改为 []"
-    },
     "new_frame": {
       "type": [
         "boolean",

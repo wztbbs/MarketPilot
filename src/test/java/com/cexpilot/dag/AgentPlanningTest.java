@@ -44,6 +44,40 @@ class AgentPlanningTest {
         var store=new PromptStore(LOADER);
         return new IntentRouter(new PlanningLlm(client,new LlmConfig(),store),store);
     }
+    @Test void rewriteUsesExistingRouterCallAndPreservesOriginalUserQuestion() {
+        String original="那 ETH 呢？";
+        String resolved="查询币安 ETH/USDT 永续最近一小时的涨跌幅。";
+        var raw=candidate().path("plan").deepCopy();
+        ((ObjectNode)raw.at("/metrics/0/instrument")).put("base","ETH");
+        var script=new Script(JSON.createObjectNode().put("route","query").put("resolved_question",resolved).toString(),
+                envelope(raw),"ETH下跌。");
+        var tools=registry();var config=new DagConfig();var store=new PromptStore(LOADER);
+        var executor=new DagExecutor(tools,config,providers(provider((q,c)->metricResult(q,c,-1,true))));
+        try {
+            var query=new DagRuntime(script,planner(script,tools,config),executor,store,Clock.fixed(REQUEST.requestTime(),ZoneOffset.UTC));
+            var dispatcher=new AgentDispatcher(router(script),query,monitor(script),store);
+            var events=new ArrayList<TraceEvent>();
+            var result=dispatcher.execute(original,"", "t",events::add,null,REQUEST,null,p->{},new PlannerInput("",null),
+                    new EvidenceSession("c","turn"),JSON.createObjectNode(),r->{});
+            assertEquals(3,script.calls.size());assertEquals(1,result.routerLlmCalls());assertEquals(1,result.plannerLlmCalls());
+            assertEquals(resolved,script.calls.get(1).get(1).content());
+            assertTrue(script.calls.get(1).get(0).content().contains(original));
+            assertTrue(script.calls.get(2).get(1).content().startsWith(original));
+            var rewrite=events.stream().filter(e->e.eventType().equals("QUERY_REWRITE")).findFirst().orElseThrow();
+            assertEquals(original,json(rewrite.outputJson()).path("original_question").asText());
+            assertEquals(resolved,json(rewrite.outputJson()).path("resolved_question").asText());
+        } finally { executor.shutdown(); }
+    }
+
+    @Test void missingOrInvalidRewriteFallsBackWithoutAnotherModelCall() {
+        for(String response:List.of("{\"route\":\"query\"}","{\"route\":\"query\",\"resolved_question\":42}",
+                "{\"route\":\"query\",\"resolved_question\":\" \"}")) {
+            var script=new Script(response);
+            var decision=router(script).route("原问题",JSON.createObjectNode(),"t",e->{});
+            assertEquals("原问题",decision.resolvedQuestion());assertEquals(1,script.calls.size());
+        }
+    }
+
     @Test void dispatcherKeepsQueryClarificationPayload() {
         var client=new Script("{\"route\":\"query\"}");
         var query=mock(DagRuntime.class);
@@ -195,6 +229,7 @@ class AgentPlanningTest {
         assertEquals(1,result.routerLlmCalls()); assertEquals(1,result.plannerLlmCalls()); assertEquals(0,result.answerLlmCalls());
         assertEquals(0,result.toolCallCount()); assertNull(result.taskScope()); verifyNoInteractions(query);
         assertFalse(script.calls.get(0).get(1).content().contains("\"metrics\""));
+        assertEquals("BTC",json(script.calls.get(0).get(1).content()).at("/context/monitor_context/targets/0/instrument/base").asText());
         assertTrue(script.calls.get(1).get(1).content().contains("candidate"));
     }
     @Test void productionMonitorBranchPersistsDraftAndReturnsConfirmationInsteadOfExecutingQuery() {

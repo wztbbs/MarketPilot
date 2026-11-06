@@ -203,6 +203,12 @@
       + metaItem('时间', trace.created_at)
       + '</div></div>';
 
+    var rewrite = events.filter(function (e) { return e.event_type === 'QUERY_REWRITE'; })[0];
+    if (rewrite && rewrite.output && rewrite.output.changed) {
+      html += '<div class="section"><h2>规划使用的问题</h2><div class="question-text">'
+        + esc(rewrite.output.resolved_question) + '</div></div>';
+    }
+
     /* ② 仅展示最终通过全部校验/绑定保护的计划；各次尝试保留在 API 的 planner_attempts / events。 */
     var attempts = data.planner_attempts || [];
     var lastAttempt = attempts.length ? attempts[attempts.length - 1] : null;

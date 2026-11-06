@@ -15,7 +15,16 @@ import java.util.List;
  */
 public record PlannerInput(String contextText, QueryFrame activeFrame,
                            List<EvidenceAssembler.Entry> evidence, int textHistoryCount,
-                           List<TaskSnapshot> tasks, TaskState currentTask, boolean clarificationSubmission) {
+                           List<TaskSnapshot> tasks, TaskState currentTask, boolean clarificationSubmission, String resolvedQuestion) {
+
+    public PlannerInput(String contextText, QueryFrame activeFrame, List<EvidenceAssembler.Entry> evidence,
+            int textHistoryCount, List<TaskSnapshot> tasks, TaskState currentTask, boolean clarificationSubmission) {
+        this(contextText,activeFrame,evidence,textHistoryCount,tasks,currentTask,clarificationSubmission,null);
+    }
+
+    public PlannerInput withResolvedQuestion(String value) {
+        return new PlannerInput(contextText,activeFrame,evidence,textHistoryCount,tasks,currentTask,clarificationSubmission,value);
+    }
 
     public PlannerInput(String contextText, QueryFrame activeFrame, List<EvidenceAssembler.Entry> evidence,
             int textHistoryCount, List<TaskSnapshot> tasks, TaskState currentTask) {
@@ -29,7 +38,7 @@ public record PlannerInput(String contextText, QueryFrame activeFrame,
         var next = currentTask.withClarificationAnswers(submitted);
         return new PlannerInput(contextText.replace(ClarificationAnswer.render(currentTask.clarificationAnswers()), "")
                         + ClarificationAnswer.render(next.clarificationAnswers()), activeFrame,
-                evidence, textHistoryCount, tasks, next, true);
+                evidence, textHistoryCount, tasks, next, true, resolvedQuestion);
     }
 
     public PlannerInput(String contextText, QueryFrame activeFrame, List<EvidenceAssembler.Entry> evidence,

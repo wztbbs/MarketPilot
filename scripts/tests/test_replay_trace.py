@@ -193,8 +193,8 @@ class ReplayTraceTest(unittest.TestCase):
     def test_current_parameter_protocol_replaces_legacy_schema_without_changing_plan_capabilities(self):
         plan_schema = {"type": "object", "properties": {"metric": {"enum": ["price.last"]}}}
         body = {"response_format": {"type": "json_schema", "json_schema": {"strict": True, "schema": {
-            "properties": {"plan": plan_schema, "explicit_conditions": {"type": "object"}},
-            "required": ["plan", "explicit_conditions"]}}}}
+            "properties": {"plan": plan_schema, "explicit_conditions": {"type": "object"}, "changes": {"type": "array"}},
+            "required": ["plan", "explicit_conditions", "changes"]}}}}
         untouched = copy.deepcopy(body)
         self.assertFalse(rp.refresh_parameter_protocol(body, "planner", keep_trace_schema=True))
         self.assertEqual(untouched, body)
@@ -203,6 +203,8 @@ class ReplayTraceTest(unittest.TestCase):
         self.assertEqual(plan_schema, schema["properties"]["plan"])
         self.assertNotIn("explicit_conditions", schema["properties"])
         self.assertNotIn("explicit_conditions", schema["required"])
+        self.assertNotIn("changes", schema["properties"])
+        self.assertNotIn("changes", schema["required"])
         self.assertEqual(["set", "reset"], schema["properties"]["condition_updates"]["additionalProperties"]["properties"]["interval"]["enum"])
         self.assertFalse(rp.refresh_parameter_protocol(body, "planner"))
 
