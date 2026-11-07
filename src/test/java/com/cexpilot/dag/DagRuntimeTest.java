@@ -23,6 +23,27 @@ import static org.mockito.Mockito.*;
 
 /** 固定模型响应 + 真实编译器/调度器/算子，覆盖新主流程、时间上下文和流式返回。 */
 class DagRuntimeTest {
+    @Test void originalQuestionsOnlyChangeUserMessagesAndLeaveSystemPrefixIdentical() {
+        var systems=new ArrayList<String>();
+        var originals=List.of("币安 BTC 昨天成交额是多少？（缓存用例甲）","那 OKX 呢？（缓存用例乙）");
+        for(int i=0;i<originals.size();i++) {
+            String original=originals.get(i);
+            String resolved=i==0?original:"查询 OKX BTC/USDT 永续昨天一整天的成交额。";
+            var p=plan(metric("m1","trade.turnover","range_statistic",i==0?"binance":"okx"));
+            var llm=new Script(envelope(p),"答案");
+            var input=new com.cexpilot.conversation.PlannerInput("",null).withResolvedQuestion(resolved);
+            var result=runtime(llm,registry()).execute(original,"","t",e->{},null,null,null,null,input,null);
+            assertEquals(2,llm.calls.size());assertEquals(1,result.plannerLlmCalls());
+            String system=llm.calls.get(0).get(0).content();systems.add(system);
+            assertFalse(system.contains(original));
+            assertFalse(system.contains("【本轮原始输入】（仅用于任务延续"));
+            String user=llm.calls.get(0).get(1).content();
+            assertTrue(user.contains(resolved));assertTrue(user.endsWith(original));
+            assertTrue(llm.calls.get(1).get(1).content().startsWith(original));
+        }
+        assertEquals(systems.get(0),systems.get(1),"改写和未改写的问题都不应改变空会话下的 system 消息");
+    }
+
     @Test void partialFundingExtremaNeverReachToolsOrAnswerEvenWhenAllRepairsStayInvalid() {
         var m=metric("m1","funding.rate_settled","recent_n","binance");
         m.remove(List.of("time","interval"));m.put("count",10);

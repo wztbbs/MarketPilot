@@ -62,8 +62,11 @@ class AgentPlanningTest {
                     new EvidenceSession("c","turn"),JSON.createObjectNode(),r->{});
             assertEquals(List.of("ETH下跌。"),deltas);
             assertEquals(3,script.calls.size());assertEquals(1,result.routerLlmCalls());assertEquals(1,result.plannerLlmCalls());
-            assertEquals(resolved,script.calls.get(1).get(1).content());
-            assertTrue(script.calls.get(1).get(0).content().contains(original));
+            String plannerUser=script.calls.get(1).get(1).content();
+            assertTrue(plannerUser.startsWith("【本轮完整查询】（规划目标）\n"+resolved));
+            assertTrue(plannerUser.endsWith("\n"+original));
+            assertTrue(plannerUser.contains("【本轮原始输入】"));
+            assertFalse(script.calls.get(1).get(0).content().contains(original));
             assertTrue(script.calls.get(2).get(1).content().startsWith(original));
             var rewrite=events.stream().filter(e->e.eventType().equals("QUERY_REWRITE")).findFirst().orElseThrow();
             assertEquals(original,json(rewrite.outputJson()).path("original_question").asText());

@@ -173,14 +173,12 @@ public class DagRuntime {
         try {
             String plannerQuestion = plannerInput != null && plannerInput.resolvedQuestion() != null
                     ? plannerInput.resolvedQuestion() : question;
-            if (plannerInput != null && plannerInput.resolvedQuestion() != null) {
-                plannerContext = plannerContext + "\n【本轮原始输入】（仅用于任务延续和本轮参数操作识别；规划目标以完整查询为准）\n" + question;
-            }
             outcome = planner.plan(plannerQuestion, plannerContext, traceId, sink,
                     activeFrame, effectiveContext, evidenceContext,
                     plannerInput == null ? List.of() : plannerInput.tasks(),
                     plannerInput == null ? null : plannerInput.currentTask(),
-                    plannerInput != null && plannerInput.clarificationSubmission());
+                    plannerInput != null && plannerInput.clarificationSubmission(),
+                    plannerInput != null && plannerInput.resolvedQuestion() != null ? question : null);
         } catch (DagPlanner.PlanningFailure pf) {
             // 4.3：planner 阶段失败（LLM 欠费/超时）同样带出已发生的调用计数
             throw new ExecutionFailure(pf, new TurnCounters(pf.llmCalls, 0, 0, 0, 0, 0, List.of())

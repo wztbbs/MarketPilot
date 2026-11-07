@@ -180,6 +180,16 @@ public class DagPlanner {
                             com.cexpilot.runtime.RequestContext requestContext, EvidenceBindingContext evidenceContext,
                             List<com.cexpilot.conversation.TaskSnapshot> taskIndex, TaskState currentTask,
                             boolean clarificationSubmission) {
+        return plan(question,conversationContext,traceId,sink,activeFrame,requestContext,evidenceContext,
+                taskIndex,currentTask,clarificationSubmission,null);
+    }
+
+    /** 原始输入仅用于模型消息呈现；question 仍是编译校验使用的独立查询目标。 */
+    public PlanOutcome plan(String question, String conversationContext, String traceId, TraceSink sink,
+                            com.cexpilot.conversation.QueryFrame activeFrame,
+                            com.cexpilot.runtime.RequestContext requestContext, EvidenceBindingContext evidenceContext,
+                            List<com.cexpilot.conversation.TaskSnapshot> taskIndex, TaskState currentTask,
+                            boolean clarificationSubmission, String originalQuestion) {
         TaskScope lastScope = TaskScope.current(currentTask);
         int maxToolCalls = llmConfig.getMaxToolCalls();
         String systemPrompt = systemPrompt(conversationContext);
@@ -189,7 +199,7 @@ public class DagPlanner {
 
         List<ChatMessage> messages = new ArrayList<>();
         messages.add(ChatMessage.system(systemPrompt));
-        messages.add(ChatMessage.user(question));
+        messages.add(ChatMessage.user(plannerUserContent(question,originalQuestion)));
 
         int promptTokens = 0;
         int completionTokens = 0;
@@ -260,7 +270,7 @@ public class DagPlanner {
                     lastError = decision.error();
                     if (attempt == attempts) break;
                     repairingClarification = true;
-                    messages = clarificationRepairMessages(question, conversationContext, response.content(), lastError);
+                    messages = clarificationRepairMessages(question, originalQuestion, conversationContext, response.content(), lastError);
                     responseFormat = clarificationRepairFormat(responseFormat);
                     continue;
                 }
@@ -387,10 +397,17 @@ public class DagPlanner {
         }
     }
 
-    private List<ChatMessage> clarificationRepairMessages(String question, String context, String output, String error) {
+    private static String plannerUserContent(String question,String originalQuestion) {
+        if(originalQuestion==null)return question;
+        return "【本轮完整查询】（规划目标）\n"+question
+                +"\n\n【本轮原始输入】（仅用于任务延续和本轮参数操作识别；规划目标以完整查询为准）\n"+originalQuestion;
+    }
+
+    private List<ChatMessage> clarificationRepairMessages(String question, String originalQuestion, String context, String output, String error) {
         ObjectNode input = MAPPER.createObjectNode().put("question", question)
                 .put("conversation_context", context == null ? "" : context)
                 .put("invalid_output", output).put("validation_error", error);
+        if(originalQuestion!=null)input.put("original_question",originalQuestion);
         return new ArrayList<>(List.of(ChatMessage.system(prompts.render("clarification_repair", Map.of(
                 "concepts", catalog.concepts(), "metrics", catalog.describeMetrics()))), ChatMessage.user(input.toString())));
     }

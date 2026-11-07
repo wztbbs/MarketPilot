@@ -461,11 +461,12 @@ def judge(case, response, trace):
             errors.append('能力边界请求产生了计划/取数，可能静默替换要求')
         if not attempts or attempts[-1].get('result') not in ('NO_PLAN', 'OUT_OF_DOMAIN'):
             errors.append('不是明确的能力拒绝/出域，不能把澄清或错误当作通过')
-        # 同义表述都要认："仅适用于/只支持/只提供/不涉及" 与 "不支持" 语义等价，
-        # 只认其中一种会让同一份正确拒绝因措辞抖动在 PASS/FAIL 之间来回跳。
-        if not any(word in answer for word in ('不支持', '未接入', '无法', '不能', '仅支持', '仅适用',
-                                               '只支持', '只提供', '不提供', '不涉及', '尚未', '范围', '不属于')):
-            errors.append('未说明能力限制')
+        # 「是否说明了能力限制」改为按结构判断，不再维护同义词表：
+        # NO_PLAN/OUT_OF_DOMAIN + 零取数已表明这是规划器判定的能力边界，gaps 又逐项要求
+        # 点名缺失的能力，措辞不该再参与判定。历史教训：未接入→仅适用于→只支持→仅接入，
+        # 同一份正确拒绝连续三次因措辞不在表内被判 FAIL。
+        if not answer.strip():
+            errors.append('未说明能力限制：拒绝时没有给出任何说明')
         for alternatives in case.gaps:
             if not any(word.lower() in answer.lower() for word in alternatives):
                 errors.append('缺少具体缺口说明：' + '/'.join(alternatives))

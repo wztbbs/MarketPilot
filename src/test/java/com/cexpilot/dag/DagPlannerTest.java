@@ -17,6 +17,38 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /** 新协议的解析、展开、修复和能力边界；模型为固定脚本，不请求网络。 */
 class DagPlannerTest {
+    @Test void normalPlanRepairRetainsBothQuestionsInUserWithoutChangingSystem() {
+        String original="改回自动粒度（原话标记-CACHE）";
+        String resolved="查询币安 BTC/USDT 永续昨天一整天成交额，恢复自动粒度。";
+        var llm=new Script("invalid json",envelope(scalarPlan()));
+        var result=planner(llm,registry(),new DagConfig()).plan(resolved,"已有会话摘要","t",e->{},
+                null,null,null,List.of(),null,false,original);
+        assertTrue(result.plan().isPresent(),result.lastError());assertEquals(2,llm.calls.size());
+        for(var messages:llm.calls) {
+            assertFalse(messages.get(0).content().contains(original));
+            assertTrue(messages.get(1).content().contains(resolved));assertTrue(messages.get(1).content().endsWith(original));
+        }
+        assertEquals(llm.calls.get(0).get(0),llm.calls.get(1).get(0));
+        assertEquals(llm.calls.get(0).get(1),llm.calls.get(1).get(1));
+    }
+
+    @Test void clarificationRepairCarriesOriginalQuestionInUserJsonOnly() {
+        String original="那 BTC 呢？（原话标记-CLARIFY）";
+        String resolved="比较币安与 OKX 的 BTC 已结算资金费率均值，期数待补充。";
+        var llm=new Script("{\"in_domain\":true,\"needs_clarification\":true,\"plan\":null,\"clarify\":[]}",
+                "{\"clarify\":[{\"key\":\"count\",\"label\":\"期数\",\"reason\":\"missing\",\"message\":\"比较最近多少期？\"}]}");
+        var result=planner(llm,registry(),new DagConfig()).plan(resolved,"已确认币安和OKX","t",e->{},
+                null,null,null,List.of(),null,false,original);
+        assertTrue(result.needsClarification());assertEquals(2,llm.calls.size());
+        var repair=llm.calls.get(1);
+        assertFalse(repair.get(0).content().contains(original));
+        var user=json(repair.get(1).content());
+        assertEquals(original,user.path("original_question").asText());
+        assertEquals(resolved,user.path("question").asText());
+        assertEquals("已确认币安和OKX",user.path("conversation_context").asText());
+        assertFalse(user.path("conversation_context").asText().contains(original));
+    }
+
     @Test void firstH7RepairExplainsWholeSeriesInputInsteadOfSuggestingBlindFieldReplacement() {
         var m=metric("m1","funding.rate_settled","recent_n","binance","okx");
         m.remove(List.of("time","interval"));m.put("count",3);
