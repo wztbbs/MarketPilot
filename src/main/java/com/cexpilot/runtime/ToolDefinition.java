@@ -5,7 +5,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 
 /** YAML 是工具描述、输入参数和输出字段契约的唯一来源。 */
 public record ToolDefinition(String name, boolean enabled, String description, JsonNode inputSchema,
-                             JsonNode outputSchema) {
+                             JsonNode outputSchema, HttpToolDefinition http) {
+    public ToolDefinition(String name,boolean enabled,String description,JsonNode inputSchema,JsonNode outputSchema) {
+        this(name,enabled,description,inputSchema,outputSchema,null);
+    }
     public ToolDefinition {
         if (name == null || name.isBlank() || description == null || description.isBlank()) {
             throw new IllegalArgumentException("工具 name / description 不能为空");

@@ -22,8 +22,8 @@ public class PlanningLlm {
         this.client=client; this.config=config; this.prompts=prompts;
     }
     public ChatResponse call(String stage,String prompt,List<ChatMessage> messages,String traceId,TraceSink sink,List<LlmUsage> usages) {
-        var budget=("router".equals(stage)||"query_continue".equals(stage))?com.cexpilot.runtime.QueryBudget.current():null;
-        if(budget!=null)budget.beforeModel("query_continue".equals(stage));
+        var budget=("router".equals(stage)||"query_continue".equals(stage)||stage.startsWith("agent_"))?com.cexpilot.runtime.QueryBudget.current():null;
+        if(budget!=null)budget.beforeModel("query_continue".equals(stage)||"agent_plan".equals(stage));
         var input=JSON.createObjectNode().put("stage",stage).put("attempt",usages.size()+1)
                 .put("model",config.getNormal().getModel()).put("model_role","normal").put("prompt_version",prompts.version(prompt));
         input.set("messages",LlmTraceSerializer.messagesToArray(messages));

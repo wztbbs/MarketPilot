@@ -298,7 +298,7 @@ public class AskService {
             log.warn("问答失败 traceId={}: {}", traceId, failure.getMessage());
             if (traceStarted && !traceFinished) {
                 if(dispatcher!=null) traceRepository.saveRouting(traceId,agentRef.get(),counters==null?0:counters.routerLlmCalls());
-                traceRepository.finishTrace(traceId, "FAILED", null, 0, 0,
+                traceRepository.finishTrace(traceId, "FAILED", null, 0, counters==null?0:counters.toolCallCount(),
                         counters == null || counters.llmUsages() == null ? null
                                 : com.cexpilot.llm.LlmUsage.knownPromptTokens(counters.llmUsages()),
                         counters == null || counters.llmUsages() == null ? null

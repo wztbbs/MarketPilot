@@ -183,7 +183,8 @@ class ToolRegistryTest {
                     () -> mock(com.cexpilot.market.taker.TakerVolumeQueryService.class));
             context.registerBean(com.cexpilot.market.funding.FundingQueryService.class,
                     () -> mock(com.cexpilot.market.funding.FundingQueryService.class));
-            context.registerBean(com.cexpilot.llm.LlmClient.class, () -> mock(com.cexpilot.llm.LlmClient.class));
+            context.registerBean(com.cexpilot.config.LlmClientConfig.NORMAL_LLM_CLIENT, com.cexpilot.llm.LlmClient.class, () -> mock(com.cexpilot.llm.LlmClient.class));
+            context.registerBean(com.cexpilot.config.LlmClientConfig.FLAGSHIP_LLM_CLIENT, com.cexpilot.llm.LlmClient.class, () -> mock(com.cexpilot.llm.LlmClient.class));
             context.refresh();
             ToolRegistry registry = context.getBean(ToolRegistry.class);
             assertEquals(10, registry.size());

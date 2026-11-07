@@ -17,7 +17,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 @SpringBootTest(classes=Application.class,properties={
         "spring.datasource.url=jdbc:h2:mem:monitor_context;MODE=MySQL;DATABASE_TO_LOWER=TRUE;DB_CLOSE_DELAY=-1",
         "spring.datasource.driver-class-name=org.h2.Driver","spring.datasource.username=sa","spring.datasource.password=",
-        "monitor.enabled=false","logging.file.name=target/monitor-context.log"
+        "monitor.enabled=false","logging.file.name=target/monitor-context.log",
+        "harness.rollout.adaptive-query-percent=0","harness.rollout.http-agents-percent=25"
 })
 @AutoConfigureMockMvc
 class MonitorApplicationContextTest {
@@ -25,6 +26,44 @@ class MonitorApplicationContextTest {
     @Autowired JdbcTemplate jdbc;
     @Autowired MonitorConfig config;
     @Autowired MockMvc mvc;
+    @Test void rolloutPropertiesBindWithoutChangingGlobalQueryConfiguration() {
+        var rollout=context.getBean(com.cexpilot.config.HarnessRolloutConfig.class);
+        assertEquals(0,rollout.getAdaptiveQueryPercent());assertEquals(25,rollout.getHttpAgentsPercent());
+        var query=context.getBean(com.cexpilot.config.QueryExecutionConfig.class);
+        assertTrue(query.isAdaptiveEnabled());
+        assertFalse(rollout.queryConfig(query,rollout.decide("visitor")).isAdaptiveEnabled());
+    }
+    @Test void httpEvidenceDoesNotDisplaceQueryCandidates() throws Exception {
+        var store=context.getBean(com.cexpilot.evidence.EvidenceStore.class);
+        var mapper=new com.fasterxml.jackson.databind.ObjectMapper();
+        var now=java.time.Instant.now();
+        String conversation="http-evidence-test";
+        try {
+            var queryFact=store.saveDerivedFact(conversation,"turn","trace","avg",
+                    mapper.createObjectNode().put("value",123),java.util.List.of(),now.minusSeconds(60)).orElseThrow();
+            var provenance=mapper.createObjectNode().put("contract_version","test-v1")
+                    .put("observed_at",now.toString());
+            com.cexpilot.evidence.EvidenceFact httpFact=null;
+            for(int i=0;i<55;i++) httpFact=store.saveToolFact(conversation,"turn","trace","test_agent","test.lookup",
+                    mapper.createObjectNode().put("value",i),provenance,now).orElseThrow();
+            // H2 的 CAST(VARCHAR AS JSON) 会编码成 JSON 字符串；转为 MySQL 实际存储的 JSON 对象。
+            for(var row:jdbc.queryForList("SELECT artifact_id,metadata_json,payload_json FROM conversation_artifact WHERE conversation_id=?",conversation)) {
+                String id=(String)row.get("artifact_id");
+                String metadata=jdbc.queryForObject("SELECT metadata_json FROM conversation_artifact WHERE artifact_id=?",String.class,id);
+                String payload=jdbc.queryForObject("SELECT payload_json FROM conversation_artifact WHERE artifact_id=?",String.class,id);
+                jdbc.update("UPDATE conversation_artifact SET metadata_json=? FORMAT JSON,payload_json=? FORMAT JSON WHERE artifact_id=?",
+                        mapper.readTree(metadata).asText(),mapper.readTree(payload).asText(),id);
+            }
+            assertEquals(java.util.List.of(queryFact.factId()),store.listReusable(conversation,now).stream()
+                    .map(com.cexpilot.evidence.EvidenceFact::factId).toList());
+            assertEquals(54,store.loadForConversation(conversation,httpFact.factId()).orElseThrow().payload().path("data").path("value").asInt());
+            assertTrue(store.loadForConversation("another-conversation",httpFact.factId()).isEmpty());
+            assertEquals(55,jdbc.queryForObject("SELECT COUNT(*) FROM conversation_artifact WHERE conversation_id=? AND kind='HTTP_TOOL'",
+                    Integer.class,conversation));
+        } finally {
+            jdbc.update("DELETE FROM conversation_artifact WHERE conversation_id=?",conversation);
+        }
+    }
     @Test void registeredAgentsUseProductionAdaptersWithCompatibleRoutes() {
         var registry=context.getBean(com.cexpilot.agent.AgentRegistry.class);
         assertSame(context.getBean(com.cexpilot.agent.MarketAnalysisAgent.class),registry.require("query"));

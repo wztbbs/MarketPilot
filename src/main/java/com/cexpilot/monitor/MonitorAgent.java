@@ -42,7 +42,7 @@ public class MonitorAgent implements ConversationAgent {
         var result=planningResult("monitor",outcome.status(),outcome.reply(),outcome.candidate(),outcome.usages());
         if(flow!=null && visitor!=null && outcome.candidate()!=null) {
             try {
-                var card=flow.saveDraft(visitor,session,question,outcome.candidate(),request.userZone().getId());
+                var card=flow.saveDraft(visitor,session,question,outcome.candidate(),request.userZone()==null?java.time.ZoneOffset.ofHours(8).getId():request.userZone().getId());
                 var payload=((ObjectNode)result.agentPayload()).deepCopy().put("status","PENDING_CONFIRMATION").put("execution_status","NOT_ENABLED");
                 payload.set("confirmation",card); payload.set("candidate",card.path("candidate"));
                 var text=new StringBuilder("我将监控条件整理为以下规则（全部同时满足）：\n");

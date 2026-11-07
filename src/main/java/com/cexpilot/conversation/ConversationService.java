@@ -181,6 +181,7 @@ public class ConversationService {
                         .put("status",payload==null?status:payload.path("status").asText(status));
                 if(payload!=null && payload.has("candidate")) state.set("candidate",payload.path("candidate"));
                 if(payload!=null && payload.has("confirmation")) state.set("confirmation",payload.path("confirmation"));
+                if(payload!=null && payload.has("handoff")) state.set("handoff",payload.path("handoff").deepCopy());
                 var dialogue=mapper.createArrayNode(); var old=state.path("dialogue");
                 for(int i=Math.max(0,old.size()-6);i<old.size();i++) dialogue.add(old.get(i));
                 dialogue.addObject().put("question",abbreviate(question,1000)).put("reply",abbreviate(answer,1000));

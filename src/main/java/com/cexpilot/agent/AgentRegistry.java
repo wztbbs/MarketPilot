@@ -9,6 +9,13 @@ import java.util.*;
 @Component
 public class AgentRegistry {
     private final Map<String, ConversationAgent> byRoute;
+    @org.springframework.beans.factory.annotation.Autowired
+    public AgentRegistry(List<ConversationAgent> agents,ConfiguredAgentFactory configured) {
+        this(combined(agents,configured.create()));
+    }
+    private static List<ConversationAgent> combined(List<ConversationAgent> builtins,List<ConversationAgent> configured) {
+        var all=new ArrayList<>(builtins);all.addAll(configured);return all;
+    }
     public AgentRegistry(List<ConversationAgent> agents) {
         var routes = new TreeMap<String, ConversationAgent>();
         var ids = new HashSet<String>();
@@ -27,6 +34,10 @@ public class AgentRegistry {
     }
     public List<AgentDefinition> definitions() {
         return byRoute.values().stream().map(ConversationAgent::definition).toList();
+    }
+    public List<AgentDefinition> definitions(com.cexpilot.config.HarnessRolloutConfig.Decision decision) {
+        return byRoute.values().stream().filter(agent -> decision.allows(agent.rolloutGroup()))
+                .map(ConversationAgent::definition).toList();
     }
     public JsonNode enrichRoutingState(String visitor, JsonNode state) {
         JsonNode enriched = state == null ? null : state.deepCopy();

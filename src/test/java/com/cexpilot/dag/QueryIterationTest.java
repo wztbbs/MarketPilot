@@ -148,6 +148,17 @@ class QueryIterationTest {
         var result=run(runtime(script,provider((q,c)->metricResult(q,c,24,true))),"成交额",null);
         assertEquals(2,script.calls.size());assertEquals("ADAPTIVE_DISABLED",result.agentPayload().at("/execution/stop_reason").asText());
     }
+    @Test void requestRolloutDisablesContinuationEvenWhenRuntimeGlobalConfigAllowsIt() {
+        var script=new Script(adaptive(scalarPlan()),"仅完成第一步");
+        var runtime=runtime(script,provider((q,c)->metricResult(q,c,24,true)));
+        var rollout=new HarnessRolloutConfig();rollout.setAdaptiveQueryPercent(0);
+        try(var scope=QueryBudget.open(rollout.queryConfig(policy,rollout.decide("visitor")))) {
+            var result=run(runtime,"成交额",null);
+            assertEquals(2,script.calls.size());assertEquals(1,result.metricFetchCount());
+            assertEquals("ADAPTIVE_DISABLED",result.agentPayload().at("/execution/stop_reason").asText());
+            assertTrue(policy.isAdaptiveEnabled());
+        }
+    }
     @Test void continuationTransportFailureRetainsUnknownCostAndSavedFacts() {
         var script=new Script(adaptive(scalarPlan())) {
             @Override public ChatResponse chat(List<ChatMessage> messages,List<ToolSpec> tools){if(calls.size()==1)throw new IllegalStateException("continuation timeout");return super.chat(messages,tools);}

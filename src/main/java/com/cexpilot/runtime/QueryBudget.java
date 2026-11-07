@@ -12,8 +12,9 @@ public final class QueryBudget {
     private static final ThreadLocal<QueryBudget> CURRENT=new ThreadLocal<>();
     private static final ExecutorService CALLS=new ThreadPoolExecutor(4,4,30,TimeUnit.SECONDS,
             new ArrayBlockingQueue<>(32),r->{var t=new Thread(r,"query-model-call");t.setDaemon(true);return t;},new ThreadPoolExecutor.AbortPolicy());
-    private final QueryExecutionConfig config;
-    private final long deadline;
+    private QueryExecutionConfig config;
+    private long deadline;
+    private final long started=System.nanoTime();
     private int models,tools;
     private long tokens;
     private boolean unknownTokens;
@@ -31,6 +32,17 @@ public final class QueryBudget {
     public static final class Exhausted extends RuntimeException {
         public final String reason;
         public Exhausted(String reason){super(reason);this.reason=reason;}
+    }
+    /** Agent YAML 只能收紧请求预算；Router 已用的调用仍计入，不重新起算。 */
+    public void tighten(QueryExecutionConfig limits) {
+        limits.validate();var capped=new QueryExecutionConfig();
+        capped.setMaxModelCalls(Math.min(config.getMaxModelCalls(),limits.getMaxModelCalls()));
+        capped.setMaxToolCalls(Math.min(config.getMaxToolCalls(),limits.getMaxToolCalls()));
+        capped.setMaxObservedTokens(Math.min(config.getMaxObservedTokens(),limits.getMaxObservedTokens()));
+        capped.setTimeoutMs(Math.min(config.getTimeoutMs(),limits.getTimeoutMs()));
+        capped.setAdaptiveEnabled(config.isAdaptiveEnabled() && limits.isAdaptiveEnabled());
+        capped.setMaxContinuations(Math.min(config.getMaxContinuations(),limits.getMaxContinuations()));
+        config=capped;deadline=Math.min(deadline,started+TimeUnit.MILLISECONDS.toNanos(capped.getTimeoutMs()));
     }
     public QueryExecutionConfig config(){return config;}
     public long remainingMs(){return Math.max(0,TimeUnit.NANOSECONDS.toMillis(deadline-System.nanoTime()));}

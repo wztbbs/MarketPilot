@@ -29,7 +29,7 @@ public class AgentContextAssembler {
             });
         }
         if (input != null) task.put("query_context",com.cexpilot.conversation.ConversationContextService.rewriteContext(input));
-        result.put("timezone",request.userZone().getId()).put("request_time",request.requestTime().toString());
+        result.put("timezone",request.userZone()==null?java.time.ZoneOffset.ofHours(8).getId():request.userZone().getId()).put("request_time",request.requestTime().toString());
         return result;
     }
     public ObjectNode routerContext(ObjectNode full) {

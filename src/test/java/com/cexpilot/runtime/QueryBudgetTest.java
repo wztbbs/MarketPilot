@@ -9,6 +9,18 @@ import java.util.concurrent.CountDownLatch;
 import static org.junit.jupiter.api.Assertions.*;
 
 class QueryBudgetTest {
+    @Test void tighteningCannotReenableAdaptiveOrExpandContinuationAllowance() {
+        var config=new QueryExecutionConfig();config.setMaxContinuations(1);
+        try(var scope=QueryBudget.open(config)) {
+            var budget=QueryBudget.current();budget.beforeModel(false);
+            var disabled=new QueryExecutionConfig();disabled.setAdaptiveEnabled(false);
+            budget.tighten(disabled);
+            budget.tighten(new QueryExecutionConfig());
+            assertFalse(budget.config().isAdaptiveEnabled());assertEquals(1,budget.config().getMaxContinuations());
+            assertEquals(1,budget.snapshot().path("model_calls").asInt());
+            assertTrue(config.isAdaptiveEnabled());
+        }
+    }
     @Test void nestedScopesShareCountersReserveAnswerAndReleaseAtRequestEnd() {
         var config=new QueryExecutionConfig();config.setMaxModelCalls(3);
         try(var root=QueryBudget.open(config)) {

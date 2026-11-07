@@ -40,7 +40,7 @@ public final class ToolDefinitionLoader {
                     }
                     definitions.add(new ToolDefinition(name, enabled, description.trim(),
                             MAPPER.valueToTree(doc.get("input_schema")),
-                            MAPPER.valueToTree(doc.get("output_schema"))));
+                            MAPPER.valueToTree(doc.get("output_schema")), http(doc)));
                 } catch (Exception e) {
                     throw new IllegalStateException("工具配置错误 " + resource.getDescription() + ": " + e.getMessage(), e);
                 }
@@ -50,4 +50,25 @@ public final class ToolDefinitionLoader {
             throw new IllegalStateException("加载工具 YAML 失败", e);
         }
     }
+    private static HttpToolDefinition http(Map<?,?> doc) {
+        Object transport=doc.get("transport");
+        if(transport==null || "java".equals(transport)) {
+            for(String key:List.of("service_id","method","path","timeout_ms","max_attempts","max_response_bytes","max_age_ms","side_effect"))
+                if(doc.containsKey(key))throw new IllegalArgumentException("HTTP 字段必须声明 transport=http: "+key);
+            return null;
+        }
+        if(!"http".equals(transport))throw new IllegalArgumentException("未知 Tool transport");
+        var allowed=java.util.Set.of("name","enabled","description","input_schema","output_schema","transport","service_id","method","path",
+                "timeout_ms","max_attempts","max_response_bytes","max_age_ms","side_effect");
+        for(Object key:doc.keySet())if(!allowed.contains(key))throw new IllegalArgumentException("未知 HTTP Tool 配置字段: "+key);
+        if(!Boolean.FALSE.equals(doc.get("side_effect")))throw new IllegalArgumentException("当前 HTTP Tool 必须显式 side_effect=false");
+        return new HttpToolDefinition((String)doc.get("service_id"),(String)doc.get("method"),(String)doc.get("path"),
+                number(doc,"timeout_ms",5000),number(doc,"max_attempts",1),number(doc,"max_response_bytes",262144),number(doc,"max_age_ms",30000));
+    }
+    private static int number(Map<?,?> doc,String key,int fallback) {
+        Object value=doc.get(key);if(value==null)return fallback;
+        if(!(value instanceof Integer number))throw new IllegalArgumentException(key+" 必须是整数");
+        return number;
+    }
+
 }

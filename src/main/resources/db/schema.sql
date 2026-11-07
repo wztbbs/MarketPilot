@@ -175,7 +175,8 @@ CREATE TABLE IF NOT EXISTS trace_event (
 
 -- 会话级取数事实（多轮追问阶段二）：一轮成功取数的完整 MetricResultJson 输出，
 -- 供后续轮次以 reference_mode=pinned_result + evidence_ref 绑定复用（REUSE_FACT）。
--- kind 本期固定 'FACT'；payload 超 256KB 不缓存（payload_json=NULL，metadata_json 记原因）；
+-- kind 为 'FACT'（Query）或 'HTTP_TOOL'（普通 Agent），查询候选时先按类型隔离；
+-- payload 超 256KB 不缓存（payload_json=NULL，metadata_json 记原因）；
 -- retained_until = 保存时 +24h，过期清理后引用走"原快照不可恢复"澄清路径，禁止重查冒充。
 CREATE TABLE IF NOT EXISTS conversation_artifact (
     artifact_id     VARCHAR(64)  NOT NULL PRIMARY KEY,

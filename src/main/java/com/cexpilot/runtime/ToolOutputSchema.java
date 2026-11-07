@@ -13,7 +13,7 @@ import java.util.Set;
  */
 public final class ToolOutputSchema {
     private static final Set<String> KEYS = Set.of(
-            "type", "description", "properties", "additionalProperties", "items", "prefixItems");
+            "type", "description", "properties", "additionalProperties", "items", "prefixItems", "required");
     private static final Set<String> TYPES = Set.of(
             "object", "array", "string", "number", "integer", "boolean", "null");
 
@@ -47,7 +47,12 @@ public final class ToolOutputSchema {
                 fail(path, "object 必须显式配置 properties 和布尔型 additionalProperties");
             }
             schema.get("properties").fields().forEachRemaining(e -> validateSchema(e.getValue(), path + "." + e.getKey()));
-        } else if (schema.has("properties") || schema.has("additionalProperties")) {
+            if(schema.has("required")) {
+                if(!schema.get("required").isArray())fail(path,"required 必须为数组");
+                var required=new java.util.HashSet<String>();
+                for(var key:schema.get("required"))if(!key.isTextual() || !schema.path("properties").has(key.asText()) || !required.add(key.asText()))fail(path,"required 字段非法");
+            }
+        } else if (schema.has("properties") || schema.has("additionalProperties") || schema.has("required")) {
             fail(path, "properties/additionalProperties 仅用于 object");
         }
         if (hasType(schema, "array")) {
@@ -67,6 +72,29 @@ public final class ToolOutputSchema {
 
     private static void fail(String path, String message) {
         throw new IllegalArgumentException(path + ": " + message);
+    }
+
+    public static void validateValue(JsonNode value,JsonNode schema) { validateValue(value,schema,"data"); }
+    private static void validateValue(JsonNode value,JsonNode schema,String path) {
+        if(value==null)fail(path,"缺少数据");
+        if(!schema.has("type"))return;
+        boolean matches=value.isNull()?hasType(schema,"null"):value.isObject()?hasType(schema,"object"):value.isArray()?hasType(schema,"array"):
+                value.isTextual()?hasType(schema,"string"):value.isBoolean()?hasType(schema,"boolean"):
+                value.isNumber() && (hasType(schema,"number") || value.isIntegralNumber() && hasType(schema,"integer"));
+        if(!matches)fail(path,"数据类型不匹配");
+        if(value.isObject()) {
+            for(var key:schema.path("required"))if(!value.has(key.asText()))fail(path,"缺少字段 "+key.asText());
+            value.fields().forEachRemaining(entry->{
+                JsonNode child=schema.path("properties").get(entry.getKey());
+                if(child!=null)validateValue(entry.getValue(),child,path+"."+entry.getKey());
+                else if(!schema.path("additionalProperties").asBoolean())fail(path,"未知字段 "+entry.getKey());
+            });
+        }
+        if(value.isArray())for(int i=0;i<value.size();i++) {
+            JsonNode item=i<schema.path("prefixItems").size()?schema.path("prefixItems").get(i):schema.path("items");
+            if(item.isBoolean())fail(path,"数组长度超出固定结构");
+            validateValue(value.get(i),item,path+"["+i+"]");
+        }
     }
 
     /** ref.path 与 ReferenceResolver 一致：空路径取整个 data；.error 是信封的错误字段。 */

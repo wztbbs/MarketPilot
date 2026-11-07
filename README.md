@@ -10,10 +10,13 @@ MarketPilot 是面向加密货币行情查询的 AI Copilot。用户用自然语
 
 ## 文档入口
 
-建议先读 Harness 建立整体认识，再读 Plan 和上下文管理了解具体实现；时间、计算和 Trace 按需查阅。
+建议先读当前架构总览，再按 Query 执行反馈、HTTP 接入或监控生命周期阅读；Plan、上下文、时间与计算按需查阅。
 
 | 文档 | 内容 |
 | --- | --- |
+| [当前架构](docs/当前架构.md) | 共享底座、内置 Agent、声明式 Agent、领域服务与三条执行路径的整体关系 |
+| [HTTP 工具与声明式 Agent 接入](docs/HTTP工具与声明式Agent接入.md) | 阶段 3：受控 HTTP Adapter、YAML 定义、权限、契约、身份与本地验证 |
+| [交接、灰度与验收](docs/交接灰度与验收.md) | 阶段 4：分析转监控的条件交接、稳定灰度、回退与验收范围 |
 | [CEX 领域知识学习](domain/README.md) | 7 篇业务入门文档与 42 个思考 Case，覆盖产品、价格时间、衍生品、盘口、分析、监控及跨所口径 |
 | [查询执行反馈](docs/查询执行反馈.md) | 阶段 2：结果驱动的有界后续规划、累积计划与请求预算 |
 | [共享 Harness 与 Agent 边界](docs/共享Harness与Agent边界.md) | 阶段 1：Agent 注册、运行契约、Query / Monitor 状态归属与兼容范围 |
@@ -28,9 +31,17 @@ MarketPilot 是面向加密货币行情查询的 AI Copilot。用户用自然语
 
 大模型评测暂未单独展开。
 
+## 共享底座与 Agent
+
+当前在同一 Spring Boot 服务中运行共享 Harness：AgentRegistry 注册内置 Market Analysis、Monitor，以及采用受控 YAML 定义的普通 Agent。底座共用 LLM、Context、Evidence、Trace、预算与工具契约；Query 走指标 DAG 和有界反馈，Monitor 保留确认与长期任务，声明式 Agent 通过白名单调用固定服务的只读 HTTP API。整体图与职责见 [当前架构](docs/当前架构.md)。
+
+普通 Agent 的标准接入可只增加 YAML、Prompt、Schema 和远程服务，不新增专用 Java Tool 类；新增指标或执行生命周期仍需相应实现。示例位于 `examples/http-agent/`，默认不加载，不代表已提供新的线上行情或洞察能力。
+
+查询后的监控追问可显式交接条件摘要，并保留源查询版本；Monitor 仍生成原待确认卡片。Query 后续规划、声明式 HTTP Agent 和显式交接支持按访客稳定灰度与配置回退，详见[交接、灰度与验收](docs/交接灰度与验收.md)。
+
 ## 当前支持范围
 
-行情主流程只接入 Binance / OKX 的 **USDT 报价、USDT 结算永续合约**。现货、交割合约、币本位或其他报价币不会自动改写为支持的产品。
+行情主流程已接入 Binance / OKX 的 **USDT 报价现货和 USDT 报价、USDT 结算永续合约**，具体指标按市场绑定区分。交割合约、币本位或其他报价币不会自动改写为支持的产品。
 
 能力以 [指标目录](src/main/resources/metrics/cex-perpetual.yml) 的 `metric + query_shape + exchange` 绑定为准；底层 Service 或 Tool 存在不等于 Planner 可以调用。
 
@@ -61,7 +72,9 @@ Query 默认走单次 DAG；当首轮模型选择 `execution_mode=adaptive` 时�
 flowchart TD
     Q[POST /api/ask 或 /api/ask/stream] --> S[AskService：固定请求时间、建立 Trace]
     M[指标目录 + 算子契约] --> P[DagPlanner：领域判断与逻辑规划]
-    S --> R0[IntentRouter：query / monitor / clarify]
+    S --> REG[AgentRegistry：内置与 YAML 定义]
+    REG --> R0[IntentRouter：已注册 route / clarify]
+    R0 -->|声明式普通 Agent| HTTP[HttpToolAgent：受控 HTTP 工具循环]
     R0 -->|query| P
     R0 -->|monitor| MP[MonitorPlanner：独立提示词与候选校验]
     MP --> MD[待确认规则卡片]
@@ -75,7 +88,12 @@ flowchart TD
     E --> R[MetricProvider → QueryService / Source / Client]
     R --> F[标准指标事实 + 确定性计算结果]
     E --> F
-    F --> A[Answer：FACTS + QUERY_STATUS + TIME_CONTEXT]
+    F --> MODE{single / adaptive}
+    MODE -->|single 或结束| A[Answer：FACTS + QUERY_STATUS + TIME_CONTEXT]
+    MODE -->|adaptive| OBS[观察结果：追加 / 结束 / 澄清]
+    OBS -->|追加计划| C
+    OBS -->|结束| A
+    OBS -->|澄清| D
     P -->|无有效计划| D[直接返回范围、缺口或澄清说明]
 ```
 

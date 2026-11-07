@@ -35,10 +35,11 @@ public class InMemoryEvidenceRepository extends EvidenceRepository {
     public List<EvidenceFact> listReusable(String conversationId, Instant now) {
         return rows.values().stream()
                 .filter(f -> f.conversationId().equals(conversationId))
+                .filter(f -> !"http_tool".equals(f.identity().path("kind").asText()))
                 .filter(f -> f.payload() != null && f.retainedUntil().isAfter(now))
                 .sorted(Comparator.comparing(EvidenceFact::fetchedAt).reversed()
                         .thenComparing(EvidenceFact::factId, Comparator.reverseOrder()))
-                .toList();
+                .limit(50).toList();
     }
 
     @Override

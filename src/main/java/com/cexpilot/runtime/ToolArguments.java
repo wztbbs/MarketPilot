@@ -11,8 +11,8 @@ import java.util.regex.Pattern;
 /** 当前工具使用的扁平 JSON Schema 子集：类型、枚举、默认值、范围、正则、required。object 仅校验是对象，嵌套结构由执行器严格校验。 */
 public final class ToolArguments {
     private static final Set<String> ROOT_KEYS = Set.of("type", "properties", "required", "additionalProperties");
-    private static final Set<String> PROPERTY_KEYS = Set.of("type", "description", "enum", "default", "minimum", "maximum", "pattern");
-    private static final Set<String> TYPES = Set.of("string", "integer", "number", "boolean", "object");
+    private static final Set<String> PROPERTY_KEYS = Set.of("type", "description", "enum", "default", "minimum", "maximum", "pattern", "properties", "additionalProperties", "required", "items");
+    private static final Set<String> TYPES = Set.of("string", "integer", "number", "boolean", "object", "array");
     private static final Pattern REF = Pattern.compile("\\{\\{[A-Za-z0-9_]+(?:\\.[A-Za-z0-9_]+)*}}");
 
     private ToolArguments() {}
@@ -41,6 +41,9 @@ public final class ToolArguments {
                 throw new IllegalArgumentException("参数类型不支持: " + entry.getKey());
             }
             checkKeys(rule, PROPERTY_KEYS);
+            if(!"object".equals(rule.path("type").asText()) && (rule.has("properties") || rule.has("required") || rule.has("additionalProperties")))
+                throw new IllegalArgumentException("对象字段只能用于 object");
+            if(!"array".equals(rule.path("type").asText()) && rule.has("items"))throw new IllegalArgumentException("items 只能用于 array");
             if (rule.has("pattern")) {
                 if (!rule.get("pattern").isTextual() || !"string".equals(rule.path("type").asText())) {
                     throw new IllegalArgumentException("pattern 仅支持字符串参数");
@@ -67,6 +70,15 @@ public final class ToolArguments {
                     }
                 }
             }
+            if("object".equals(rule.path("type").asText()) && rule.has("properties")) {
+                ObjectNode nested=rule.deepCopy();nested.remove(List.of("description","default","enum"));validateSchema(nested);
+            }
+            if("array".equals(rule.path("type").asText())) {
+                JsonNode item=rule.get("items");
+                if(item==null || !item.isObject())throw new IllegalArgumentException("array 必须配置 items");
+                ObjectNode wrapper=new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode().put("type","object");
+                wrapper.putObject("properties").set("item",item);validateSchema(wrapper);
+            }
             if (rule.has("default")) {
                 List<String> errors = new ArrayList<>();
                 validateValue(entry.getKey(), rule.get("default"), rule, errors);
@@ -89,7 +101,19 @@ public final class ToolArguments {
                 result.set(entry.getKey(), entry.getValue().get("default").deepCopy());
             }
         });
+        result.fields().forEachRemaining(entry->{
+            JsonNode rule=schema.path("properties").get(entry.getKey());
+            if(rule!=null)result.set(entry.getKey(),nestedDefaults(entry.getValue(),rule));
+        });
         return result;
+    }
+    private static JsonNode nestedDefaults(JsonNode value,JsonNode rule) {
+        if(value.isObject() && rule.has("properties"))return withDefaults(value,rule);
+        if(value.isArray() && rule.has("items")) {
+            var array=new com.fasterxml.jackson.databind.ObjectMapper().createArrayNode();
+            value.forEach(item->array.add(nestedDefaults(item,rule.get("items"))));return array;
+        }
+        return value;
     }
 
     public static List<String> validate(JsonNode args, JsonNode schema, boolean allowReferences) {
@@ -118,6 +142,7 @@ public final class ToolArguments {
             case "number" -> value.isNumber();
             case "boolean" -> value.isBoolean();
             case "object" -> value.isObject();
+            case "array" -> value.isArray();
             default -> false;
         };
     }
@@ -127,6 +152,8 @@ public final class ToolArguments {
             errors.add(name + " 类型必须为 " + rule.path("type").asText());
             return;
         }
+        if(value.isObject() && rule.has("properties"))errors.addAll(validate(value,rule,false));
+        if(value.isArray())for(JsonNode item:value)validateValue(name+"[]",item,rule.path("items"),errors);
         if (rule.has("enum")) {
             boolean found = false;
             for (JsonNode option : rule.get("enum")) if (option.equals(value)) found = true;

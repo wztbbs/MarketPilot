@@ -23,6 +23,34 @@ class ConversationServiceTest {
     private final ConversationRepository repository = mock(ConversationRepository.class);
     private final ConversationService service = new ConversationService(repository, new ConversationConfig());
 
+    @Test void monitorClarificationKeepsHandoffSourceAcrossTurnsAndFencingPreventsOverwrite() {
+        var mapper=new com.fasterxml.jackson.databind.ObjectMapper();
+        var initial=mapper.createObjectNode(); initial.putObject("monitor_context");
+        when(repository.routingState("c")).thenReturn(initial);
+        when(repository.ownsTurnForUpdate("c","t1",1)).thenReturn(true);
+        var payload=mapper.createObjectNode().put("status","NEEDS_CLARIFICATION");
+        payload.putObject("handoff").put("source_frame_id","source").put("source_frame_version",3);
+        service.finishRoutedTurn("c",new ConversationService.TurnHandle(1,"t1",1),"监控它","NEEDS_CLARIFICATION","什么阈值？",
+                "trace",null,mapper.createArrayNode(),null,Instant.now(),java.time.ZoneOffset.UTC,"什么阈值？","monitor",payload);
+        var saved=org.mockito.ArgumentCaptor.forClass(com.fasterxml.jackson.databind.JsonNode.class);
+        verify(repository).saveRoutingState(eq("c"),eq(1L),eq("monitor"),saved.capture());
+        assertEquals("source",saved.getValue().at("/handoff/source_frame_id").asText());
+        var previous=mapper.createObjectNode(); previous.set("monitor_context",saved.getValue());
+        when(repository.routingState("c")).thenReturn(previous);
+        when(repository.ownsTurnForUpdate("c","t2",2)).thenReturn(true);
+        service.finishRoutedTurn("c",new ConversationService.TurnHandle(2,"t2",2),"跌2%","SUCCEEDED","草稿",
+                "trace2",null,mapper.createArrayNode(),null,Instant.now(),java.time.ZoneOffset.UTC,null,"monitor",
+                mapper.createObjectNode().put("status","PENDING_CONFIRMATION"));
+        var next=org.mockito.ArgumentCaptor.forClass(com.fasterxml.jackson.databind.JsonNode.class);
+        verify(repository).saveRoutingState(eq("c"),eq(2L),eq("monitor"),next.capture());
+        assertEquals(saved.getValue().path("handoff"),next.getValue().path("handoff"));
+        service.finishRoutedTurn("c",new ConversationService.TurnHandle(3,"stale",1),"旧轮次","FAILED","失败",
+                "trace3",null,mapper.createArrayNode(),null,Instant.now(),java.time.ZoneOffset.UTC,null,"monitor",payload);
+        verify(repository,never()).saveRoutingState(eq("c"),eq(1L),eq("monitor"),eq(next.getValue()));
+        verify(repository,org.mockito.Mockito.times(2)).saveRoutingState(any(),anyLong(),eq("monitor"),any());
+        verify(repository,never()).saveTask(any());
+    }
+
     @Test
     void 访客已有会话时复用最近会话() {
         when(repository.findLatestByVisitorId("v1")).thenReturn("conv-existing");

@@ -124,3 +124,11 @@ query:
     max-tool-calls: 8 # 累计新准入的节点；同请求已执行节点不重复计数
     timeout-ms: 180000
     max-observed-tokens: 48000 # 收到 usage 后阻止后续模型调用，不是单次请求的输出 token 上限
+
+# 稳定访客分组；百分比降为 0 后重新启动可关闭新路径，内置 query/monitor 和已有规则不受影响。
+harness:
+  rollout:
+    adaptive-query-percent: ${HARNESS_ADAPTIVE_QUERY_PERCENT:100}
+    http-agents-percent: ${HARNESS_HTTP_AGENTS_PERCENT:100}
+    handoff-percent: ${HARNESS_HANDOFF_PERCENT:100}
+    cohort-salt: ${HARNESS_COHORT_SALT:harness-v1}

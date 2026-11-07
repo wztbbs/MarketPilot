@@ -16,12 +16,14 @@ public class ToolRegistry {
     private final Map<String, AgentTool> tools = new LinkedHashMap<>();
     private final Map<String, ToolDefinition> definitions = new LinkedHashMap<>();
 
+    public ToolRegistry(List<AgentTool> toolList,ResourceLoader loader) {this(toolList,ToolDefinitionLoader.load(loader));}
     @Autowired
-    public ToolRegistry(List<AgentTool> toolList, ResourceLoader loader) {
-        this(toolList, ToolDefinitionLoader.load(loader));
+    public ToolRegistry(List<AgentTool> toolList,ResourceLoader loader,org.springframework.beans.factory.ObjectProvider<com.cexpilot.config.HttpToolServices> services) {
+        this(toolList,ToolDefinitionLoader.load(loader),services.getIfAvailable(com.cexpilot.config.HttpToolServices::new));
     }
 
-    public ToolRegistry(List<AgentTool> toolList, List<ToolDefinition> configured) {
+    public ToolRegistry(List<AgentTool> toolList,List<ToolDefinition> configured) {this(toolList,configured,new com.cexpilot.config.HttpToolServices());}
+    public ToolRegistry(List<AgentTool> toolList,List<ToolDefinition> configured,com.cexpilot.config.HttpToolServices services) {
         Map<String, AgentTool> executors = new LinkedHashMap<>();
         for (AgentTool tool : toolList) {
             if (executors.putIfAbsent(tool.name(), tool) != null)
@@ -33,6 +35,10 @@ public class ToolRegistry {
                 throw new IllegalStateException("重复工具 YAML: " + definition.name());
             if (definition.enabled()) {
                 AgentTool executor = executors.get(definition.name());
+                if(definition.http()!=null) {
+                    if(executor!=null)throw new IllegalStateException("HTTP Tool 不能覆盖 Java 执行器: "+definition.name());
+                    executor=new HttpAgentTool(definition,services);
+                }
                 if (executor == null) throw new IllegalStateException("工具缺少执行器: " + definition.name());
                 tools.put(definition.name(), executor);
                 definitions.put(definition.name(), definition);
@@ -66,5 +72,11 @@ public class ToolRegistry {
         return ToolArguments.withDefaults(args, spec.inputSchema());
     }
 
+    public boolean isHttp(String name){return get(name) instanceof HttpAgentTool;}
+    public String contractVersion(String name){
+        var definition=definitions.get(name);
+        if(definition==null)throw new IllegalArgumentException("未知工具");
+        return com.cexpilot.prompt.PromptStore.fingerprint(definition.description()+":"+definition.inputSchema()+":"+definition.outputSchema()+":"+definition.http());
+    }
     public int size() { return tools.size(); }
 }

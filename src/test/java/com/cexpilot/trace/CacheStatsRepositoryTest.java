@@ -99,4 +99,15 @@ class CacheStatsRepositoryTest {
         assertEquals(4,result.stages().size());
         assertTrue(result.stages().values().stream().allMatch(t->t.equals(new CacheStatsRepository.Totals(0,0,0,0))));
     }
+    @Test void executionFeedbackAndConfiguredAgentsUsePlanAndAnswerBuckets() {
+        ask("a",start,"SUCCESS");
+        event("a","LLM_CALL","query_continue",100,50);
+        event("a","LLM_CALL","agent_plan",200,100);
+        event("a","LLM_CALL","agent_answer",300,200);
+        var result=repository.summarizeByStage(start,start+1000);
+        assertEquals(new CacheStatsRepository.Totals(300,150,2,0),result.stages().get("plan"));
+        assertEquals(new CacheStatsRepository.Totals(300,200,1,0),result.stages().get("answer"));
+        assertEquals(new CacheStatsRepository.Totals(0,0,0,0),result.stages().get("other"));
+    }
+
 }

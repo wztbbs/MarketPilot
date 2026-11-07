@@ -37,9 +37,11 @@ public class EvidenceRepository {
                             (artifact_id, conversation_id, kind, source_turn_id, source_trace_id,
                              lookup_key, schema_version, derived, metadata_json, payload_json,
                              fetched_at, retained_until)
-                        VALUES (?, ?, 'FACT', ?, ?, ?, ?, ?, CAST(? AS JSON), CAST(? AS JSON), ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CAST(? AS JSON), CAST(? AS JSON), ?, ?)
                         """,
-                fact.factId(), fact.conversationId(), fact.sourceTurnId(), fact.sourceTraceId(),
+                fact.factId(), fact.conversationId(),
+                "http_tool".equals(fact.identity().path("kind").asText()) ? "HTTP_TOOL" : "FACT",
+                fact.sourceTurnId(), fact.sourceTraceId(),
                 fact.lookupKey(), fact.schemaVersion(), fact.derived() ? 1 : 0,
                 metadata.toString(), fact.payload() == null ? null : fact.payload().toString(),
                 Timestamp.from(fact.fetchedAt()), Timestamp.from(fact.retainedUntil()));
@@ -49,7 +51,7 @@ public class EvidenceRepository {
     public Optional<EvidenceFact> find(String conversationId, String factId) {
         List<EvidenceFact> rows = jdbc.query("""
                         SELECT * FROM conversation_artifact
-                        WHERE conversation_id = ? AND artifact_id = ? AND kind = 'FACT'
+                        WHERE conversation_id = ? AND artifact_id = ? AND kind IN ('FACT', 'HTTP_TOOL')
                         """,
                 (rs, rowNum) -> map(rs), conversationId, factId);
         return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));

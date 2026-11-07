@@ -1,0 +1,24 @@
+name: reference.lookup
+enabled: true
+description: 本地模拟参考记录
+transport: http
+service_id: reference
+method: POST
+path: /lookup
+side_effect: false
+timeout_ms: 2000
+max_attempts: 1
+max_age_ms: 60000
+input_schema:
+  type: object
+  additionalProperties: false
+  required: [symbol]
+  properties:
+    symbol: {type: string, enum: [BTC, ETH]}
+output_schema:
+  type: object
+  additionalProperties: false
+  required: [symbol, value]
+  properties:
+    symbol: {type: string}
+    value: {type: number}

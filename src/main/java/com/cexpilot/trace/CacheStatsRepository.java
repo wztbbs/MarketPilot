@@ -38,8 +38,8 @@ public class CacheStatsRepository {
                 FROM (
                     SELECT e.prompt_tokens,e.cached_tokens,
                            CASE WHEN e.name IN ('router','intent_router','route') THEN 'route'
-                                WHEN e.name IN ('dag_planner','monitor_planner','clarification_repair','planner','plan') THEN 'plan'
-                                WHEN e.name='answer' THEN 'answer'
+                                WHEN e.name IN ('dag_planner','monitor_planner','clarification_repair','query_continue','agent_plan','planner','plan') THEN 'plan'
+                                WHEN e.name IN ('answer','agent_answer') THEN 'answer'
                                 ELSE 'other' END AS call_stage,
                            CASE WHEN e.prompt_tokens>0 AND e.cached_tokens>=0
                                      AND e.cached_tokens<=e.prompt_tokens THEN 1 ELSE 0 END AS valid_usage

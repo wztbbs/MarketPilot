@@ -70,6 +70,15 @@ public class EvidenceStore {
                 identity, null, null, payload, now));
     }
 
+    public Optional<EvidenceFact> saveToolFact(String conversationId,String turnId,String traceId,String agent,String tool,
+            JsonNode payload,JsonNode provenance,Instant now) {
+        ObjectNode identity=MAPPER.createObjectNode().put("kind","http_tool").put("agent",agent).put("tool",tool)
+                .put("contract_version",provenance.path("contract_version").asText());
+        var data=MAPPER.createObjectNode();data.set("data",payload);data.set("provenance",provenance);
+        return persist(newFact(conversationId,turnId,traceId,false,List.of(),identity,provenance.path("observed_at").asText(),
+                (ObjectNode)provenance.deepCopy(),data,now));
+    }
+
     /** 必须同时校验会话范围：conversationId 不匹配的 factId 视同不存在。 */
     public Optional<EvidenceFact> loadForConversation(String conversationId, String factId) {
         return repository.find(conversationId, factId);
@@ -77,7 +86,8 @@ public class EvidenceStore {
 
     /** 未过期且有 payload 的候选，按取数时间倒序（短别名按此顺序稳定分配）。 */
     public List<EvidenceFact> listReusable(String conversationId, Instant now) {
-        return repository.listReusable(conversationId, now);
+        // 通用 HTTP 事实保留来源与会话隔离，但不伪装成 Query 的可绑定指标。
+        return repository.listReusable(conversationId, now).stream().filter(f->!"http_tool".equals(f.identity().path("kind").asText())).toList();
     }
 
     public int deleteExpired(Instant now) {
