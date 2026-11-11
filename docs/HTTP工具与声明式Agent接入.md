@@ -2,7 +2,7 @@
 
 阶段 3 解决两个扩展问题：新增一个符合标准协议的只读 HTTP Tool，不必新增专用 Java 执行器；新增一个采用已支持执行策略的普通 Agent，可通过版本管理的 YAML、Prompt 和 Schema 接入注册表与公共入口。
 
-内置 Market Analysis 继续使用指标逻辑计划与 Query DAG；Monitor 继续其确认、版本、排期和通知生命周期。声明式 Agent 当前支持 `http_tool_loop`，只调用明确获准的 HTTP 工具。这是现有指标规划器之外的受控接入路径，HTTP Tool 注册不会自动变成可查询指标，也不会自动开放给 Query 或 Monitor。
+内置 Market Analysis 继续使用指标逻辑计划与 Query DAG；Monitor 继续其确认、版本、排期和通知生命周期。声明式 Agent 通过 `engine` 选择底座引擎：`react`（HTTP 工具决策循环，ReactEngine）或 `plan`（DAG 计划执行，PlanEngine），只调用明确获准的工具。这是现有指标规划器之外的受控接入路径，HTTP Tool 注册不会自动变成可查询指标，也不会自动开放给 Query 或 Monitor。
 
 没有实现洞察、套利服务、写操作、Studio、热更新、配置上传接口或无代码业务逻辑。需要新执行生命周期时仍需代码实现。
 
@@ -31,10 +31,10 @@ id: reference
 route: reference
 description: 查询本地模拟参考记录
 enabled: true
+engine: react
 prompt: local_reference
 allowed_tools: [reference.lookup]
 execution:
-  mode: http_tool_loop
   max_steps: 4
   max_model_calls: 6
   max_tool_calls: 3
@@ -140,7 +140,7 @@ Agent YAML 的模型、工具、时间和 observed-token 预算只能收紧公�
 
 Trace 包含 AGENT_DISPATCH、LLM_CALL/agent_plan、每次 http_tool_attempt、TOOL_CALL、AGENT_REJECTED、AGENT_FINISHED。连接地址、认证头和原始依赖错误正文不写入 Trace。缓存统计将 agent_plan / query_continue 归入 plan，agent_answer 归入 answer。
 
-本期不建立跨能力自动 Handoff 或长期任务状态。普通 Agent 回答经现有 API、SSE、会话与 Trace 返回，QueryFrame 不作为它的私有状态；需要持久化业务生命周期的 Agent 仍应像 Monitor 一样实现业务服务。后续阶段 4 的[条件交接与灰度](交接灰度与验收.md)只适用于内置分析转监控，不将普通 HTTP 结果自动变为监控条件。
+本期不建立跨能力自动 Handoff 或长期任务状态。普通 Agent 回答经现有 API、SSE、会话与 Trace 返回，QueryDefinition 不作为它的私有状态；需要持久化业务生命周期的 Agent 仍应像 Monitor 一样实现业务服务。后续阶段 4 的[条件交接与灰度](交接灰度与验收.md)只适用于内置分析转监控，不将普通 HTTP 结果自动变为监控条件。
 
 ## 验证范围
 

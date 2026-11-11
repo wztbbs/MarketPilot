@@ -2,10 +2,10 @@ id: reference
 route: reference
 description: 查询本地模拟参考记录
 enabled: true
+engine: react
 prompt: local_reference
 allowed_tools: [reference.lookup]
 execution:
-  mode: http_tool_loop
   max_steps: 4
   max_model_calls: 6
   max_tool_calls: 3

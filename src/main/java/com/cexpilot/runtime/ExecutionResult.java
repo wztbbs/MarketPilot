@@ -63,24 +63,40 @@ public record ExecutionResult(String answer,
                 httpRequestCount, savedFactIds, null);
     }
 
+    /** @return 替换 taskScope 后的副本，其余字段保持不变 */
     public ExecutionResult withTaskScope(com.cexpilot.conversation.TaskScope scope) {
         return new ExecutionResult(answer, evidence, toolCallCount, steps, promptTokens, completionTokens,
                 turnStatus, clarify, reusedFactCount, plannerLlmCalls, answerLlmCalls, metricFetchCount,
                 calculationCount, httpRequestCount, savedFactIds, scope, llmUsages,routerLlmCalls,agentType,agentPayload);
     }
 
+    /** @return 替换 llmUsages 后的副本，其余字段保持不变 */
     public ExecutionResult withLlmUsages(List<com.cexpilot.llm.LlmUsage> usages) {
         return new ExecutionResult(answer, evidence, toolCallCount, steps, promptTokens, completionTokens,
                 turnStatus, clarify, reusedFactCount, plannerLlmCalls, answerLlmCalls, metricFetchCount,
                 calculationCount, httpRequestCount, savedFactIds, taskScope, usages,routerLlmCalls,agentType,agentPayload);
     }
 
+    /**
+     * 标记实际执行的 Agent 及其业务载荷。
+     *
+     * @param type    实际执行的对外 route（query/monitor/clarify/声明式 Agent）
+     * @param payload Agent 私有载荷（如交接结果、stop_reason）；可为 null
+     * @return 替换 agentType/agentPayload 后的副本
+     */
     public ExecutionResult withAgent(String type,JsonNode payload) {
         return new ExecutionResult(answer,evidence,toolCallCount,steps,promptTokens,completionTokens,turnStatus,clarify,
                 reusedFactCount,plannerLlmCalls,answerLlmCalls,metricFetchCount,calculationCount,httpRequestCount,
                 savedFactIds,taskScope,llmUsages,routerLlmCalls,type,payload);
     }
 
+    /**
+     * 合并 Router 的用量：router 用量追加到 llmUsages 前部，token 计数并入 promptTokens/completionTokens，
+     * routerLlmCalls 记为路由调用次数；原业务用量缺失但计数非零时补一条 unknown 占位。
+     *
+     * @param routing Router 阶段的 LLM 用量列表
+     * @return 合并后的副本
+     */
     public ExecutionResult withRouterUsages(List<com.cexpilot.llm.LlmUsage> routing) {
         var combined=new java.util.ArrayList<>(routing);
         if(llmUsages!=null) combined.addAll(llmUsages);

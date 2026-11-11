@@ -22,7 +22,7 @@ MarketPilot 是面向加密货币行情查询的 AI Copilot。用户用自然语
 | [共享 Harness 与 Agent 边界](docs/共享Harness与Agent边界.md) | 阶段 1：Agent 注册、运行契约、Query / Monitor 状态归属与兼容范围 |
 | [Harness设计](docs/Harness设计.md) | 核心概念、完整链路、围栏强度、上下文与失败处理、验证方法及当前缺口 |
 | [Plan与指标元数据](docs/Plan与指标元数据.md) | 指标目录、查询形态、逻辑计划、物理绑定、引用契约、校验与扩展步骤 |
-| [上下文管理](docs/上下文管理.md) | frame、澄清接续、历史事实、Planner 协议、跨轮执行绑定、存储与当前边界 |
+| [上下文管理](docs/上下文管理.md) | 任务与版本、查询定义、澄清接续、历史事实、Planner 协议、跨轮执行绑定、存储与当前边界 |
 | [时间窗口](docs/时间窗口.md) | TimeSpec、固定请求时间、时区、网格对齐、分页、覆盖核对与实际统计范围 |
 | [聚合指标](docs/聚合指标.md) | 成品指标与计算节点、九个算子、输入输出、精度、来源传播和年化限制 |
 | [Trace搭建](docs/trace搭建.md) | Trace 生命周期、表结构、事件负载、版本指纹、回放接口与定位步骤 |
@@ -74,7 +74,7 @@ flowchart TD
     M[指标目录 + 算子契约] --> P[DagPlanner：领域判断与逻辑规划]
     S --> REG[AgentRegistry：内置与 YAML 定义]
     REG --> R0[IntentRouter：已注册 route / clarify]
-    R0 -->|声明式普通 Agent| HTTP[HttpToolAgent：受控 HTTP 工具循环]
+    R0 -->|声明式 Agent（engine: react）| HTTP[ReactEngine：底座受控工具决策循环]
     R0 -->|query| P
     R0 -->|monitor| MP[MonitorPlanner：独立提示词与候选校验]
     MP --> MD[待确认规则卡片]

@@ -63,12 +63,11 @@ class ConversationTurnConcurrencyTest {
         }
 
         @Override
-        public void finishTurn(String turnId, String status, String answer, String traceId,
-                               String logicalPlanJson, String frameJson) {
+        public void finishTurn(String turnId, String status, String answer, String traceId) {
         }
 
         @Override
-        public synchronized boolean saveActiveFrame(String conversationId, String turnId, long fencingToken, String frameJson) {
+        public synchronized boolean ownsTurnForUpdate(String conversationId, String turnId, long fencingToken) {
             State current = states.get(conversationId);
             return current != null && turnId.equals(current.runningTurnId()) && fencingToken == current.fencingToken();
         }
@@ -85,21 +84,6 @@ class ConversationTurnConcurrencyTest {
 
         @Override
         public void touchConversation(String conversationId, String title) {
-        }
-
-        // R1/R2 任务状态：并发语义与占用无关，内存版只做 no-op 保证 SUCCEEDED 路径不触库
-        @Override
-        public boolean savePendingTask(String conversationId, String turnId, long fencingToken, String pendingJson) {
-            return true;
-        }
-
-        @Override
-        public boolean saveLastAttempt(String conversationId, String turnId, long fencingToken, String attemptJson) {
-            return true;
-        }
-
-        @Override
-        public void clearTaskState(String conversationId, String turnId, long fencingToken) {
         }
 
         /** 测试辅助：把当前占用租约置为已过期，模拟"执行者崩溃后租约到期"。 */
@@ -127,7 +111,7 @@ class ConversationTurnConcurrencyTest {
         assertEquals(1, first.queryNo());
         assertNull(service.beginTurn("c1", "忙碌请求", null, NOW));
 
-        service.finishTurn("c1", first, "FAILED", "失败", "trace-1", null, null);
+        service.finishTaskTurn("c1", first, "问题", "FAILED", "失败", "trace-1", null, null, null, NOW, java.time.ZoneOffset.UTC, null);
         ConversationService.TurnHandle second = service.beginTurn("c1", "重试", null, NOW);
         assertNotNull(second);
         assertEquals(2, second.queryNo(), "失败轮次保留序号，忙碌请求不消耗序号");
@@ -171,7 +155,7 @@ class ConversationTurnConcurrencyTest {
         assertEquals(1, acquired.get(0).queryNo());
 
         // 释放后下一轮拿到递增序号，且全程无重复
-        service.finishTurn("c1", acquired.get(0), "SUCCEEDED", "答案", "trace-1", null, null);
+        service.finishTaskTurn("c1", acquired.get(0), "问题", "SUCCEEDED", "答案", "trace-1", null, null, null, NOW, java.time.ZoneOffset.UTC, null);
         ConversationService.TurnHandle next = service.beginTurn("c1", "追问", null, NOW);
         assertNotNull(next);
         assertEquals(2, next.queryNo());
@@ -194,7 +178,7 @@ class ConversationTurnConcurrencyTest {
         org.junit.jupiter.api.Assertions.assertFalse(repository.releaseTurn("c1", stale.turnId(), stale.fencingToken()));
         assertNull(service.beginTurn("c1", "问题3", null, NOW), "新占用未被旧执行者释放时，会话仍忙碌");
 
-        service.finishTurn("c1", takeover, "SUCCEEDED", "答案", "trace-2", null, null);
+        service.finishTaskTurn("c1", takeover, "问题2", "SUCCEEDED", "答案", "trace-2", null, null, null, NOW, java.time.ZoneOffset.UTC, null);
         assertNotNull(service.beginTurn("c1", "问题3", null, NOW));
     }
 

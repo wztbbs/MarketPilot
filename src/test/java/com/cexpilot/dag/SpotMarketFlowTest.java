@@ -1,7 +1,7 @@
 package com.cexpilot.dag;
 
 import com.cexpilot.config.*;
-import com.cexpilot.conversation.QueryFrame;
+import com.cexpilot.conversation.TaskVersion;
 import com.cexpilot.evidence.*;
 import com.cexpilot.market.*;
 import com.cexpilot.market.kline.*;
@@ -205,9 +205,9 @@ class SpotMarketFlowTest {
     @Test void marketSwitchAppearsInInheritanceDiffAndCannotReusePerpetualFact() {
         var previous = compiler.compileFull(plan(group("m", "price.last", "snapshot", "perpetual", "binance")), 8);
         var next = compiler.compileFull(plan(group("m", "price.last", "snapshot", "spot", "binance")), 8);
-        var frame = QueryFrame.fromCompiledPlan("c", "turn", "原问题", NOW, ZoneOffset.UTC, previous, null);
-        assertEquals(Set.of("market_type"), new InheritanceValidator().diffKeys(frame, next, CTX));
-        assertNull(new InheritanceValidator().check(frame, next, Set.of("market_type"), CTX));
+        var frame = com.cexpilot.conversation.ContextFixtures.executed("test-task", "c", 1, "turn", "原问题", NOW, ZoneOffset.UTC, previous, null, "SUCCEEDED");
+        assertEquals(Set.of("market_type"), new InheritanceValidator().diffKeys(frame.queryDefinition(), next, CTX));
+        assertNull(new InheritanceValidator().check(frame.queryDefinition(), next, Set.of("market_type"), CTX));
         var store = new EvidenceStore(new InMemoryEvidenceRepository());
         store.saveFact("c", "turn", "t", previous.targets().get(0), JSON.createObjectNode().put("value", 210).put("as_of", "2026-10-31 08:00:00"), NOW);
         var m = group("m", "price.last", "snapshot", "spot", "binance").put("reference_mode", "pinned_result").put("evidence_ref", "fact_1");

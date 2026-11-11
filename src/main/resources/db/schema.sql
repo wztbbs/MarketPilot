@@ -21,29 +21,22 @@ CREATE TABLE IF NOT EXISTS conversation_query (
     -- 轮次生命周期（多轮追问阶段一 a）：
     -- turn_id 全局唯一标识一轮问答；parent_turn_id 记录前端声明的上一轮；turn_status 取值
     -- RUNNING / SUCCEEDED / FAILED（后续可扩展 NEEDS_CLARIFICATION）；started_at/finished_at 为服务端时间。
-    -- 旧数据这些列全为 NULL，renderContext 等读取方按 NULL=历史成功轮次处理。
     turn_id         VARCHAR(64)  NULL,
     parent_turn_id  VARCHAR(64)  NULL,
     turn_status     VARCHAR(32)  NULL,
     started_at      DATETIME(6)  NULL,
     finished_at     DATETIME(6)  NULL,
-    -- 校验通过的 LogicalPlan 原文 JSON（Planner 草稿不落这里；规划未通过校验时为空）
-    logical_plan_json JSON       NULL,
-    -- 当轮有效 QueryFrame 缓存；完整任务版本（含澄清/失败）以 task_state_json 为准。
-    -- 稳定 frame_id + frame_version 定位版本，base_frame_version 表示实际继承来源。
-    frame_json     JSON          NULL,
-    frame_id       VARCHAR(64)   NULL,
-    frame_version  BIGINT        NULL,
-    base_frame_version BIGINT    NULL,
+    -- 轮次只关联提交的任务版本，完整状态唯一保存在 conversation_task_version。
+    task_id        VARCHAR(64)   NULL,
+    task_version   BIGINT        NULL,
     task_action    VARCHAR(16)   NULL,
-    task_state_json JSON         NULL,
     agent_type     VARCHAR(16)   NULL,
     agent_payload_json JSON      NULL,
     created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uk_query_turn (turn_id),
     UNIQUE KEY uk_query_conv_no (conversation_id, query_no),
     KEY idx_query_conversation (conversation_id, query_no),
-    UNIQUE KEY uk_query_frame_version (conversation_id, frame_id, frame_version)
+    UNIQUE KEY uk_query_task_version (conversation_id, task_id, task_version)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
 
 -- 会话状态行：原子序号分配 + 同会话串行执行占用（多轮追问阶段一 a）。
@@ -56,69 +49,44 @@ CREATE TABLE IF NOT EXISTS conversation_state (
     running_turn_id VARCHAR(64)  NULL,
     lease_until     DATETIME(6)  NULL,
     fencing_token   BIGINT       NOT NULL DEFAULT 0,
-    -- 活动 QueryFrame（多轮追问阶段一 b）：成功轮次提交时覆盖，失败轮次不覆盖；
-    -- 下一轮由 ConversationContextService 读取注入 Planner 并做继承对账（阶段一 c）；
-    -- 写入同样带 running_turn_id + fencing_token 条件，过期执行者不得覆盖新 frame
-    active_frame_json JSON       NULL,
-    active_frame_id VARCHAR(64)   NULL, -- 当前讨论任务，包含澄清/失败任务；JSON 为有效条件缓存
-    -- 未完成状态兼容缓存；新流程以 conversation_frame.state_json / active_frame_id 为准。
-    -- 澄清/失败保存完整 TaskState，包含原问题、完整计划和补充链。
-    pending_task_json JSON       NULL,
-    -- 失败任务兼容缓存，不再只存 has_valid_plan 标志。
-    last_attempt_json JSON       NULL,
+    -- 当前任务的稳定身份，最新状态通过任务的 latest_version 读取。
+    active_task_id VARCHAR(64)   NULL,
     active_agent_type VARCHAR(16) NULL,
     monitor_planning_json JSON   NULL,
     updated_at      DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
 
--- 会话与任务一对多；state_json 包含有效条件、成功状态与未完成补充链。
--- 完整版本保存在 conversation_query.task_state_json，按稳定 frame_id + frame_version 定位。
-CREATE TABLE IF NOT EXISTS conversation_frame (
-    frame_id VARCHAR(64) NOT NULL PRIMARY KEY,
+-- 稳定任务身份及版本入口，不保存完整状态 JSON。
+CREATE TABLE IF NOT EXISTS conversation_task (
+    task_id VARCHAR(64) NOT NULL PRIMARY KEY,
     conversation_id VARCHAR(64) NOT NULL,
-    version BIGINT NOT NULL,
+    origin_question TEXT NOT NULL,
     first_query_no BIGINT NOT NULL,
     last_query_no BIGINT NOT NULL,
-    last_turn_id VARCHAR(64) NOT NULL,
-    status VARCHAR(32) NOT NULL,
-    state_json JSON NOT NULL,
+    latest_version BIGINT NOT NULL,
+    latest_successful_version BIGINT NULL,
     updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
-    KEY idx_frame_recent (conversation_id, last_query_no),
-    KEY idx_frame_first (conversation_id, first_query_no)
+    KEY idx_task_recent (conversation_id, last_query_no),
+    KEY idx_task_first (conversation_id, first_query_no)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
 
--- ============ 已有部署的迁移注意点（DBA 手工执行，schema 演进不自动跑） ============
--- 1. conversation_query 加列：
---      ALTER TABLE conversation_query
---          ADD COLUMN turn_id VARCHAR(64) NULL,
---          ADD COLUMN parent_turn_id VARCHAR(64) NULL,
---          ADD COLUMN turn_status VARCHAR(32) NULL,
---          ADD COLUMN started_at DATETIME(6) NULL,
---          ADD COLUMN finished_at DATETIME(6) NULL;
--- 2. 加 uk_query_turn 唯一键前无需处理（旧数据 turn_id 全 NULL，MySQL 唯一键允许多个 NULL）：
---      ALTER TABLE conversation_query ADD UNIQUE KEY uk_query_turn (turn_id);
--- 3. 加 uk_query_conv_no 前必须检查历史重复序号（旧代码 MAX+1 并发下可能产生重复），
---    有重复需先人工清理/重排，代码不替 DBA 做决定：
---      SELECT conversation_id, query_no, COUNT(*) c FROM conversation_query
---      GROUP BY conversation_id, query_no HAVING c > 1;
---      ALTER TABLE conversation_query ADD UNIQUE KEY uk_query_conv_no (conversation_id, query_no);
--- 4. conversation_state 为新表，CREATE TABLE IF NOT EXISTS 即可，存量会话首次提问时自动建行。
--- 5. 阶段一(b) 增量列（旧部署需手工 ALTER；新列均可空，存量行不受影响）：
---      ALTER TABLE conversation_query ADD COLUMN logical_plan_json JSON NULL;
---      ALTER TABLE conversation_state ADD COLUMN active_frame_json JSON NULL;
--- 6. 阶段二（migrations/008_conversation_artifact.sql）：trace_event.event_type 加宽到 VARCHAR(32)
---    （EVIDENCE_REUSE_DECISION 等长事件名），ask_trace 加 reused_facts 列，新建 conversation_artifact。
---    必须先迁移后部署，否则新事件名写库会被截断报错。
--- 7. 阶段三（migrations/009_turn_counters.sql）：ask_trace 加 planner_llm_calls / answer_llm_calls /
---    metric_fetch_count / calculation_count / http_request_count 计数列。
--- 8. 序号语义调整（migrations/010_last_query_no.sql）：旧库 next_query_no 转为 last_query_no，值减 1。
--- 9. 审查修复 R1/R2（migrations/011_pending_task_and_last_attempt.sql）：conversation_state 加
---    pending_task_json / last_attempt_json 两列（澄清任务与失败尝试独立于活动 frame 保存）。
---    停止旧应用并等待在途问答结束后迁移，再启动新版本；新库无需执行该迁移。
--- 10. 审查修复 R3 一期（migrations/012_turn_frame_snapshot.sql）：conversation_query 加
---    frame_json 列（轮次级 frame 快照，历史任务回访）。存量行留 NULL，读取方兼容。
+-- 完整版本唯一存储；只追加，base_version 是继承来源，并非 version - 1。
+CREATE TABLE IF NOT EXISTS conversation_task_version (
+    task_id VARCHAR(64) NOT NULL,
+    conversation_id VARCHAR(64) NOT NULL,
+    version BIGINT NOT NULL,
+    base_version BIGINT NOT NULL,
+    source_turn_id VARCHAR(64) NOT NULL,
+    has_query_definition BOOLEAN NOT NULL,
+    version_json JSON NOT NULL,
+    created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    PRIMARY KEY (task_id, version),
+    UNIQUE KEY uk_task_version_turn (source_turn_id),
+    KEY idx_task_version_conversation (conversation_id, task_id, version)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4;
 
--- 013_task_lifecycle.sql：独立任务与轮次版本，含旧快照、未完成任务的迁移。先停旧应用迁移再启动新版。
+-- 旧上下文数据不兼容：已有部署需停服执行 migrations/022_unified_task_model.sql 后启动新应用。
+-- Trace 与非查询任务业务数据保留，不通过旧快照恢复查询任务。
 
 -- 一次问答 = 一条 ask_trace（就是 Trace 的主表，👎 之后靠它完整回放）
 CREATE TABLE IF NOT EXISTS ask_trace (

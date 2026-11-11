@@ -24,7 +24,7 @@ Router 获取当前查询有效条件、已填写澄清值、未完成需求及�
 
 ## 本次保留的功能字段
 
-condition_updates（set/reset）和 task_action/task_ref/state_ref 仍由 Planner 处理。本次不把任务选择也搬到 Router，避免在接入改写时改变历史回访能力。原始本轮输入与改写后的完整查询一起放在 Planner 的 user 消息中，分别用【本轮原始输入】与【本轮完整查询】标记，用于区分用户本轮 set/reset 与改写带入的继承参数；不能因为句子被改成完整查询就判为 NEW。原始问题不再拼入 system 的 conversation_context，避免在静态规则中间截断缓存前缀。普通规划修复保留这条 user 消息；专项澄清修复通过 user JSON 的 original_question 传递原话，question 仍保留独立查询目标。程序侧计划校验继续使用独立查询字符串，不使用两段合并文本。
+condition_updates（set/reset）和 task_action/candidate_ref 仍由 Planner 处理。本次不把任务选择也搬到 Router，避免在接入改写时改变历史回访能力。原始本轮输入与改写后的完整查询一起放在 Planner 的 user 消息中，分别用【本轮原始输入】与【本轮完整查询】标记，用于区分用户本轮 set/reset 与改写带入的继承参数；不能因为句子被改成完整查询就判为 NEW。原始问题不再拼入 system 的 conversation_context，避免在静态规则中间截断缓存前缀。普通规划修复保留这条 user 消息；专项澄清修复通过 user JSON 的 original_question 传递原话，question 仍保留独立查询目标。程序侧计划校验继续使用独立查询字符串，不使用两段合并文本。
 
 固定参数继续继承；恢复自动必须显式 reset。澄清接续、NEW/CONTINUE/RESUME、历史状态版本恢复、pinned_result 与 evidence_ref 的有效性校验继续保留。当前字段是否继续迁移应单独评估，不直接删除。
 

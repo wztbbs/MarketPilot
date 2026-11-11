@@ -19,6 +19,12 @@ public final class ToolOutputSchema {
 
     private ToolOutputSchema() {}
 
+    /**
+     * 校验 output schema 的合法性（启动时调用）：关键字白名单、type 只允许单类型或类型+null、
+     * object 必须显式 properties 与 additionalProperties、array 必须配置 items 等。
+     *
+     * @param schema 待校验 schema；非法抛 IllegalArgumentException
+     */
     public static void validateSchema(JsonNode schema) {
         validateSchema(schema, "output_schema");
     }
@@ -70,10 +76,17 @@ public final class ToolOutputSchema {
         }
     }
 
+    /** 抛出带路径定位的 schema 校验错误。 */
     private static void fail(String path, String message) {
         throw new IllegalArgumentException(path + ": " + message);
     }
 
+    /**
+     * 校验工具实际返回的 data 是否满足 output schema（运行时使用）；无 type 的动态节点跳过。
+     *
+     * @param value  实际返回的 data 节点
+     * @param schema 已通过 validateSchema 的 output schema
+     */
     public static void validateValue(JsonNode value,JsonNode schema) { validateValue(value,schema,"data"); }
     private static void validateValue(JsonNode value,JsonNode schema,String path) {
         if(value==null)fail(path,"缺少数据");
@@ -97,7 +110,14 @@ public final class ToolOutputSchema {
         }
     }
 
-    /** ref.path 与 ReferenceResolver 一致：空路径取整个 data；.error 是信封的错误字段。 */
+    /**
+     * 规划期校验引用路径（如 .data.list.0.close）在结构上是否可达。ref.path 与 ReferenceResolver 一致：
+     * 空路径取整个 data；.error 是信封的错误字段。无 type 的动态节点视为可达。
+     *
+     * @param schema 工具的 output schema
+     * @param path   引用路径
+     * @return 错误描述；null 表示路径合法或无法静态判定
+     */
     public static String referenceError(JsonNode schema, String path) {
         if (path == null || path.isEmpty() || path.equals(".data") || path.equals(".error")) return null;
         if (!path.startsWith(".data.")) return "输出根路径应为 data，字段路径不能省略 data";
@@ -137,7 +157,11 @@ public final class ToolOutputSchema {
         return null;
     }
 
-    /** 紧凑展示层级和固定列，避免向 Planner 注入重复的 schema 关键字。 */
+    /**
+     * 紧凑展示 schema 的层级和固定列，避免向 Planner 注入重复的 schema 关键字。
+     *
+     * @return 形如 "{a:number(描述), b:array<...>}" 的单行结构描述
+     */
     public static String describe(JsonNode schema) {
         String shape;
         if (hasType(schema, "object")) {
@@ -162,6 +186,7 @@ public final class ToolOutputSchema {
         return description.isBlank() ? shape : shape + "(" + description + ")";
     }
 
+    /** @return schema 的 type（可为数组）是否包含指定类型 */
     private static boolean hasType(JsonNode schema, String type) {
         JsonNode value = schema.path("type");
         if (value.isTextual()) return type.equals(value.asText());
@@ -169,6 +194,7 @@ public final class ToolOutputSchema {
         return false;
     }
 
+    /** @return properties 的字段名列表，用于错误提示 */
     private static List<String> fieldNames(JsonNode properties) {
         List<String> names = new ArrayList<>();
         properties.fieldNames().forEachRemaining(names::add);

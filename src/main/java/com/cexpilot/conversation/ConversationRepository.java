@@ -180,43 +180,12 @@ public class ConversationRepository {
                 conversationId, queryNo, question, turnId, parentTurnId, java.sql.Timestamp.from(requestTime));
     }
 
-    /** 提交轮次结果：状态、答案、trace、校验通过的 LogicalPlan 原文（无则 null）、
-     *  当轮 frame 快照（R3 一期，成功轮次传入；历史任务回访的依据）、结束时间。 */
-    public void finishTurn(String turnId, String status, String answer, String traceId,
-                           String logicalPlanJson, String frameJson) {
+    /** 普通轮次只保存交互结果，不产生或复制任务状态。 */
+    public void finishTurn(String turnId, String status, String answer, String traceId) {
         jdbc.update("""
-                        UPDATE conversation_query
-                        SET turn_status = ?, answer = ?, trace_id = ?, logical_plan_json = ?,
-                            frame_json = ?, finished_at = NOW(6)
-                        WHERE turn_id = ?
-                        """,
-                status, answer, traceId, logicalPlanJson, frameJson, turnId);
-    }
-
-    /** 最近带 frame 快照的成功轮次（R3 一期任务索引），时间倒序；快照损坏的行跳过。 */
-    public List<TaskSnapshot> recentFrames(String conversationId, int limit) {
-        List<Object[]> rows = jdbc.query("""
-                        SELECT query_no, turn_id, question, frame_json
-                        FROM conversation_query
-                        WHERE conversation_id = ?
-                          AND turn_status = 'SUCCEEDED' AND frame_json IS NOT NULL
-                        ORDER BY query_no DESC
-                        LIMIT ?
-                        """,
-                (rs, rowNum) -> new Object[]{
-                        rs.getLong("query_no"), rs.getString("turn_id"),
-                        rs.getString("question"), rs.getString("frame_json")},
-                conversationId, limit);
-        List<TaskSnapshot> tasks = new java.util.ArrayList<>();
-        for (Object[] row : rows) {
-            try {
-                tasks.add(new TaskSnapshot((Long) row[0], (String) row[1], (String) row[2],
-                        QueryFrame.fromJson((String) row[3])));
-            } catch (Exception e) {
-                // 单条快照损坏不影响其余任务索引
-            }
-        }
-        return tasks;
+                UPDATE conversation_query SET turn_status = ?, answer = ?, trace_id = ?, finished_at = NOW(6)
+                WHERE turn_id = ?
+                """, status, answer, traceId, turnId);
     }
 
     /** 同一短事务内锁住执行占用；旧执行者不能更新任务、版本或活动指针。 */
@@ -229,170 +198,105 @@ public class ConversationRepository {
         return !rows.isEmpty() && rows.get(0);
     }
 
-    public TaskState findActiveTask(String conversationId) {
-        List<TaskState> rows = jdbc.query("""
-                SELECT f.state_json FROM conversation_state s
-                JOIN conversation_frame f ON f.frame_id = s.active_frame_id AND f.conversation_id = s.conversation_id
+    private static final String LATEST_VERSION_JOIN = """
+            SELECT v.version_json FROM conversation_task t
+            JOIN conversation_task_version v ON v.task_id = t.task_id AND v.version = t.latest_version
+                AND v.conversation_id = t.conversation_id
+            """;
+
+    public Task findTask(String conversationId, String taskId) {
+        var rows = jdbc.query("""
+                SELECT * FROM conversation_task WHERE conversation_id = ? AND task_id = ?
+                """, (rs, n) -> new Task(rs.getString("task_id"), rs.getString("conversation_id"),
+                rs.getString("origin_question"), rs.getLong("first_query_no"), rs.getLong("last_query_no"),
+                rs.getLong("latest_version"), rs.getObject("latest_successful_version") == null
+                        ? null : rs.getLong("latest_successful_version")), conversationId, taskId);
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
+    public TaskVersion findActiveTaskVersion(String conversationId) {
+        var rows = jdbc.query(LATEST_VERSION_JOIN + """
+                JOIN conversation_state s ON s.active_task_id = t.task_id AND s.conversation_id = t.conversation_id
                 WHERE s.conversation_id = ?
-                """, (rs, n) -> TaskState.fromJson(rs.getString("state_json")), conversationId);
+                """, (rs, n) -> TaskVersion.fromJson(rs.getString("version_json")), conversationId);
         return rows.isEmpty() ? null : rows.get(0);
     }
-
-    public TaskState findTask(String conversationId, String frameId) {
-        List<TaskState> rows = jdbc.query("""
-                SELECT state_json FROM conversation_frame WHERE conversation_id = ? AND frame_id = ?
-                """, (rs, n) -> TaskState.fromJson(rs.getString("state_json")), conversationId, frameId);
+    public TaskVersion findLatestTaskVersion(String conversationId, String taskId) {
+        var rows = jdbc.query(LATEST_VERSION_JOIN + " WHERE t.conversation_id = ? AND t.task_id = ?",
+                (rs, n) -> TaskVersion.fromJson(rs.getString("version_json")), conversationId, taskId);
         return rows.isEmpty() ? null : rows.get(0);
     }
-
-    public List<TaskState> recentTasks(String conversationId, int limit) {
+    public List<TaskVersion> recentTaskLatestVersions(String conversationId, int limit) {
+        return jdbc.query(LATEST_VERSION_JOIN + " WHERE t.conversation_id = ? ORDER BY t.last_query_no DESC LIMIT ?",
+                (rs, n) -> TaskVersion.fromJson(rs.getString("version_json")), conversationId, limit);
+    }
+    public TaskVersion firstTaskLatestVersion(String conversationId) {
+        var rows = jdbc.query(LATEST_VERSION_JOIN + " WHERE t.conversation_id = ? ORDER BY t.first_query_no ASC LIMIT 1",
+                (rs, n) -> TaskVersion.fromJson(rs.getString("version_json")), conversationId);
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+    public List<TaskVersion> recentTaskVersions(String conversationId, String taskId, int limit) {
         return jdbc.query("""
-                SELECT state_json FROM conversation_frame WHERE conversation_id = ?
-                ORDER BY last_query_no DESC LIMIT ?
-                """, (rs, n) -> TaskState.fromJson(rs.getString("state_json")), conversationId, limit);
+                SELECT version_json FROM conversation_task_version WHERE conversation_id = ? AND task_id = ?
+                ORDER BY version DESC LIMIT ?
+                """, (rs, n) -> TaskVersion.fromJson(rs.getString("version_json")), conversationId, taskId, limit);
     }
-
-    /** 会话最初任务单独保留在索引中，不随近期任务窗口退出。 */
-    public TaskState firstTask(String conversationId) {
-        List<TaskState> rows = jdbc.query("""
-                SELECT state_json FROM conversation_frame WHERE conversation_id = ?
-                ORDER BY first_query_no ASC LIMIT 1
-                """, (rs, n) -> TaskState.fromJson(rs.getString("state_json")), conversationId);
+    public TaskVersion firstTaskVersion(String conversationId, String taskId) {
+        var rows = jdbc.query("""
+                SELECT version_json FROM conversation_task_version WHERE conversation_id = ? AND task_id = ?
+                ORDER BY version ASC LIMIT 1
+                """, (rs, n) -> TaskVersion.fromJson(rs.getString("version_json")), conversationId, taskId);
         return rows.isEmpty() ? null : rows.get(0);
     }
-
-    public List<TaskState> recentTaskVersions(String conversationId, String frameId, int limit) {
-        return jdbc.query("""
-                SELECT task_state_json FROM conversation_query
-                WHERE conversation_id = ? AND frame_id = ? AND task_state_json IS NOT NULL
-                ORDER BY frame_version DESC LIMIT ?
-                """, (rs, n) -> TaskState.fromJson(rs.getString("task_state_json")), conversationId, frameId, limit);
-    }
-
-    public TaskState firstTaskVersion(String conversationId, String frameId) {
-        List<TaskState> rows = jdbc.query("""
-                SELECT task_state_json FROM conversation_query
-                WHERE conversation_id = ? AND frame_id = ? AND task_state_json IS NOT NULL
-                ORDER BY frame_version ASC LIMIT 1
-                """, (rs, n) -> TaskState.fromJson(rs.getString("task_state_json")), conversationId, frameId);
+    public TaskVersion taskVersion(String conversationId, String taskId, long version) {
+        var rows = jdbc.query("""
+                SELECT version_json FROM conversation_task_version WHERE conversation_id = ? AND task_id = ? AND version = ?
+                """, (rs, n) -> TaskVersion.fromJson(rs.getString("version_json")), conversationId, taskId, version);
         return rows.isEmpty() ? null : rows.get(0);
     }
-
-    public TaskState taskVersion(String conversationId, String frameId, long version) {
-        List<TaskState> rows = jdbc.query("""
-                SELECT task_state_json FROM conversation_query
-                WHERE conversation_id = ? AND frame_id = ? AND frame_version = ? AND task_state_json IS NOT NULL
-                """, (rs, n) -> TaskState.fromJson(rs.getString("task_state_json")), conversationId, frameId, version);
+    public TaskVersion latestSuccessfulTaskVersion(String conversationId, String taskId) {
+        var rows = jdbc.query("""
+                SELECT v.version_json FROM conversation_task t
+                JOIN conversation_task_version v ON v.task_id = t.task_id AND v.version = t.latest_successful_version
+                    AND v.conversation_id = t.conversation_id
+                WHERE t.conversation_id = ? AND t.task_id = ?
+                """, (rs, n) -> TaskVersion.fromJson(rs.getString("version_json")), conversationId, taskId);
         return rows.isEmpty() ? null : rows.get(0);
     }
-
-    public TaskState firstExecutableTaskVersion(String conversationId, String frameId) {
-        List<TaskState> rows = jdbc.query("""
-                SELECT task_state_json FROM conversation_query
-                WHERE conversation_id = ? AND frame_id = ? AND task_state_json IS NOT NULL AND frame_json IS NOT NULL
-                ORDER BY frame_version ASC LIMIT 1
-                """, (rs, n) -> TaskState.fromJson(rs.getString("task_state_json")), conversationId, frameId);
+    public TaskVersion firstExecutableTaskVersion(String conversationId, String taskId) {
+        var rows = jdbc.query("""
+                SELECT version_json FROM conversation_task_version
+                WHERE conversation_id = ? AND task_id = ? AND has_query_definition = TRUE ORDER BY version ASC LIMIT 1
+                """, (rs, n) -> TaskVersion.fromJson(rs.getString("version_json")), conversationId, taskId);
         return rows.isEmpty() ? null : rows.get(0);
     }
-
-    public void saveTask(TaskState state) {
+    /** 必须在持有会话执行权的提交事务内调用。版本 INSERT 不允许覆盖历史。 */
+    public void saveTaskVersion(TaskVersion version) {
+        Task task = Task.advance(findTask(version.conversationId(), version.taskId()), version);
         jdbc.update("""
-                INSERT INTO conversation_frame
-                    (frame_id, conversation_id, version, first_query_no, last_query_no, last_turn_id, status, state_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                ON DUPLICATE KEY UPDATE version = VALUES(version), last_query_no = VALUES(last_query_no),
-                    last_turn_id = VALUES(last_turn_id), status = VALUES(status), state_json = VALUES(state_json)
-                """, state.frameId(), state.conversationId(), state.version(), state.firstQueryNo(), state.lastQueryNo(),
-                state.turnId(), state.status(), state.toJson());
+                INSERT INTO conversation_task_version
+                    (task_id, conversation_id, version, base_version, source_turn_id, has_query_definition, version_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, version.taskId(), version.conversationId(), version.version(), version.baseVersion(),
+                version.turnId(), version.queryDefinition() != null, version.toJson());
+        jdbc.update("""
+                INSERT INTO conversation_task (task_id, conversation_id, origin_question, first_query_no,
+                    last_query_no, latest_version, latest_successful_version) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON DUPLICATE KEY UPDATE last_query_no = VALUES(last_query_no), latest_version = VALUES(latest_version),
+                    latest_successful_version = VALUES(latest_successful_version)
+                """, task.taskId(), task.conversationId(), task.originQuestion(), task.firstQueryNo(),
+                task.lastQueryNo(), task.latestVersion(), task.latestSuccessfulVersion());
     }
-
     public void finishTaskQuery(String turnId, String status, String answer, String traceId,
-                                String logicalPlan, TaskState state, TaskScope scope) {
+                                TaskVersion version, TaskScope scope) {
         jdbc.update("""
-                UPDATE conversation_query SET turn_status = ?, answer = ?, trace_id = ?, logical_plan_json = ?,
-                    frame_json = ?, frame_id = ?, frame_version = ?, base_frame_version = ?, task_action = ?,
-                    task_state_json = ?, finished_at = NOW(6) WHERE turn_id = ?
-                """, status, answer, traceId, logicalPlan, state.frame() == null ? null : state.frame().toJson(),
-                state.frameId(), state.version(), scope.baseVersion(), scope.action().name(), state.toJson(), turnId);
+                UPDATE conversation_query SET turn_status = ?, answer = ?, trace_id = ?,
+                    task_id = ?, task_version = ?, task_action = ?, finished_at = NOW(6) WHERE turn_id = ?
+                """, status, answer, traceId, version.taskId(), version.version(), scope.action().name(), turnId);
     }
-
-    public void activateTask(String conversationId, TaskState state) {
-        jdbc.update("""
-                UPDATE conversation_state SET active_frame_id = ?, active_frame_json = ?,
-                    pending_task_json = ?, last_attempt_json = ? WHERE conversation_id = ?
-                """, state.frameId(), state.frame() == null ? null : state.frame().toJson(),
-                "NEEDS_CLARIFICATION".equals(state.status()) ? state.toJson() : null,
-                "FAILED".equals(state.status()) ? state.toJson() : null, conversationId);
-    }
-
-    /**
-     * 提交活动 QueryFrame（仅成功轮次调用）。带 running_turn_id + fencing_token 条件：
-     * 租约过期被接管后，旧执行者不得覆盖新 frame。返回是否写入。
-     */
-    public boolean saveActiveFrame(String conversationId, String turnId, long fencingToken, String frameJson) {
-        return jdbc.update("""
-                        UPDATE conversation_state
-                        SET active_frame_json = ?
-                        WHERE conversation_id = ? AND running_turn_id = ? AND fencing_token = ?
-                        """,
-                frameJson, conversationId, turnId, fencingToken) > 0;
-    }
-
-    /** 活动 QueryFrame 原文；无状态行或未提交过 frame 时返回 null。 */
-    public String findActiveFrameJson(String conversationId) {
-        List<String> jsons = jdbc.query(
-                "SELECT active_frame_json FROM conversation_state WHERE conversation_id = ?",
-                (rs, rowNum) -> rs.getString("active_frame_json"), conversationId);
-        return jsons.isEmpty() ? null : jsons.get(0);
-    }
-
-    /**
-     * 澄清任务独立于活动 frame 保存（R1）：新会话没有 frame 也能接续澄清，
-     * 老会话澄清不挂在旧任务上。带 fencing 条件。返回是否写入。
-     */
-    public boolean savePendingTask(String conversationId, String turnId, long fencingToken, String pendingJson) {
-        return jdbc.update("""
-                        UPDATE conversation_state
-                        SET pending_task_json = ?
-                        WHERE conversation_id = ? AND running_turn_id = ? AND fencing_token = ?
-                        """,
-                pendingJson, conversationId, turnId, fencingToken) > 0;
-    }
-
-    /** 失败尝试独立保存（R2）："再试一次/那 OKX 呢"要能接上刚才失败的任务。带 fencing 条件。 */
-    public boolean saveLastAttempt(String conversationId, String turnId, long fencingToken, String attemptJson) {
-        return jdbc.update("""
-                        UPDATE conversation_state
-                        SET last_attempt_json = ?
-                        WHERE conversation_id = ? AND running_turn_id = ? AND fencing_token = ?
-                        """,
-                attemptJson, conversationId, turnId, fencingToken) > 0;
-    }
-
-    /** 成功轮次提交时清空澄清任务与失败尝试（任务已了结）。带 fencing 条件。 */
-    public void clearTaskState(String conversationId, String turnId, long fencingToken) {
-        jdbc.update("""
-                        UPDATE conversation_state
-                        SET pending_task_json = NULL, last_attempt_json = NULL
-                        WHERE conversation_id = ? AND running_turn_id = ? AND fencing_token = ?
-                        """,
-                conversationId, turnId, fencingToken);
-    }
-
-    /** 待补澄清任务原文；无状态行或没有待补任务时返回 null。 */
-    public String findPendingTaskJson(String conversationId) {
-        List<String> jsons = jdbc.query(
-                "SELECT pending_task_json FROM conversation_state WHERE conversation_id = ?",
-                (rs, rowNum) -> rs.getString("pending_task_json"), conversationId);
-        return jsons.isEmpty() ? null : jsons.get(0);
-    }
-
-    /** 最近失败尝试原文；无状态行或没有失败任务时返回 null。 */
-    public String findLastAttemptJson(String conversationId) {
-        List<String> jsons = jdbc.query(
-                "SELECT last_attempt_json FROM conversation_state WHERE conversation_id = ?",
-                (rs, rowNum) -> rs.getString("last_attempt_json"), conversationId);
-        return jsons.isEmpty() ? null : jsons.get(0);
+    public void activateTask(String conversationId, TaskVersion version) {
+        jdbc.update("UPDATE conversation_state SET active_task_id = ? WHERE conversation_id = ?",
+                version.taskId(), conversationId);
     }
 
     /**
@@ -422,14 +326,14 @@ public class ConversationRepository {
     }
 
     public List<QueryRecord> recentQueries(String conversationId, int limit) {
-        // 只把已成功（或轮次功能上线前的历史）轮次注入上下文：
+        // 只把明确标记为成功的轮次注入上下文：
         // RUNNING 行（含当前这轮）与 FAILED 行不进 prompt，保持与"成功后追加聊天记录"的旧口径一致。
         // 发生时间优先取应用时钟写入的 started_at；轮次功能上线前的旧行回退 created_at（DB 时钟，可能带时区偏移）。
         List<QueryRecord> desc = jdbc.query("""
                         SELECT query_no, question, answer, trace_id, COALESCE(started_at, created_at) AS occurred_at
                         FROM conversation_query
                         WHERE conversation_id = ?
-                          AND (turn_status IS NULL OR turn_status = 'SUCCEEDED')
+                          AND turn_status = 'SUCCEEDED'
                         ORDER BY query_no DESC
                         LIMIT ?
                         """,

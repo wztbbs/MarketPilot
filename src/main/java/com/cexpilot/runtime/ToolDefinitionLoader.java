@@ -20,6 +20,12 @@ public final class ToolDefinitionLoader {
 
     private ToolDefinitionLoader() {}
 
+    /**
+     * 加载 classpath:tools/*.yml 中全部工具定义，按资源路径排序；任何配置错误抛 IllegalStateException 阻止启动。
+     *
+     * @param loader Spring 资源加载器
+     * @return 工具定义列表（含 disabled 项）
+     */
     public static List<ToolDefinition> load(ResourceLoader loader) {
         try {
             Resource[] resources = ResourcePatternUtils.getResourcePatternResolver(loader)
@@ -50,6 +56,12 @@ public final class ToolDefinitionLoader {
             throw new IllegalStateException("加载工具 YAML 失败", e);
         }
     }
+    /**
+     * 解析 transport 字段：缺省/java 表示 Java 执行器（不允许出现 HTTP 字段）；
+     * http 表示声明式只读 HTTP 工具，必须显式 side_effect=false，其他 transport 拒绝。
+     *
+     * @return HTTP 传输声明；Java 工具返回 null
+     */
     private static HttpToolDefinition http(Map<?,?> doc) {
         Object transport=doc.get("transport");
         if(transport==null || "java".equals(transport)) {
@@ -65,6 +77,7 @@ public final class ToolDefinitionLoader {
         return new HttpToolDefinition((String)doc.get("service_id"),(String)doc.get("method"),(String)doc.get("path"),
                 number(doc,"timeout_ms",5000),number(doc,"max_attempts",1),number(doc,"max_response_bytes",262144),number(doc,"max_age_ms",30000));
     }
+    /** 取整数字段，缺省返回 fallback；类型不是整数抛 IllegalArgumentException。 */
     private static int number(Map<?,?> doc,String key,int fallback) {
         Object value=doc.get(key);if(value==null)return fallback;
         if(!(value instanceof Integer number))throw new IllegalArgumentException(key+" 必须是整数");

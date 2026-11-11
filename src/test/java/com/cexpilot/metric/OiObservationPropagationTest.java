@@ -1,6 +1,6 @@
 package com.cexpilot.metric;
 
-import com.cexpilot.conversation.QueryFrame;
+import com.cexpilot.conversation.TaskVersion;
 import com.cexpilot.dag.DagContext;
 import com.cexpilot.dag.PlanNode;
 import com.cexpilot.market.series.SeriesCoverage;
@@ -32,13 +32,13 @@ class OiObservationPropagationTest {
                 ConditionOrigin.DEFAULT,null,null,ConditionOrigin.DEFAULT,false,ConditionOrigin.DEFAULT,null,null,null,"percent","oi","test-v1");
         var plan=new CompiledPlan(null,null,null,Map.of(),List.of(target));
         var evidence=JSON.createArrayNode(); evidence.addObject().put("node_id","metric_0").put("ok",true).set("data",payload());
-        var frame=QueryFrame.fromCompiledPlan("conversation","turn","OI最近一小时",END,ZoneOffset.UTC,plan,evidence);
-        var saved=frame.targets().get(0);
+        var frame=com.cexpilot.conversation.ContextFixtures.executed("test-task", "conversation", 1, "turn", "OI最近一小时", END, ZoneOffset.UTC, plan, evidence, "SUCCEEDED");
+        var saved=frame.queryDefinition().targets().get(0);
         assertNull(saved.interval());
-        assertEquals("boundary_values",saved.executionMetadata().path("sample_selection").asText());
-        assertEquals(END.toString(),saved.executionMetadata().path("end_sample_at").asText());
-        assertTrue(saved.executionMetadata().path("selection_range").has("end_inclusive"));
-        assertFalse(saved.executionMetadata().path("actual_range").has("end_exclusive"));
+        assertEquals("boundary_values",frame.executionSummary().metadata(saved.physicalId()).path("sample_selection").asText());
+        assertEquals(END.toString(),frame.executionSummary().metadata(saved.physicalId()).path("end_sample_at").asText());
+        assertTrue(frame.executionSummary().metadata(saved.physicalId()).path("selection_range").has("end_inclusive"));
+        assertFalse(frame.executionSummary().metadata(saved.physicalId()).path("actual_range").has("end_exclusive"));
     }
     @Test void derivedResultCarriesUnambiguousOiSourceMetadata() {
         var context=new DagContext(); context.put("metric_0",ToolResult.success(payload()));

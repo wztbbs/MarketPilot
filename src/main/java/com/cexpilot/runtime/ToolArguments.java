@@ -17,6 +17,12 @@ public final class ToolArguments {
 
     private ToolArguments() {}
 
+    /**
+     * 校验 input schema 的合法性（启动时调用）：类型白名单、关键字白名单、
+     * pattern/minimum/maximum 仅用于匹配类型、enum 值类型一致、default 自身合法等。
+     *
+     * @param schema 待校验的 schema；非法抛 IllegalArgumentException
+     */
     public static void validateSchema(JsonNode schema) {
         if (schema == null || !schema.isObject() || !"object".equals(schema.path("type").asText())
                 || !schema.path("properties").isObject()) {
@@ -87,12 +93,20 @@ public final class ToolArguments {
         });
     }
 
+    /** 校验 schema 只使用了受支持的关键字。 */
     private static void checkKeys(JsonNode node, Set<String> supported) {
         node.fieldNames().forEachRemaining(key -> {
             if (!supported.contains(key)) throw new IllegalArgumentException("不支持的 schema 字段: " + key);
         });
     }
 
+    /**
+     * 返回应用了 schema 默认值的参数副本（含嵌套 object/array 的递归默认值），不修改入参。
+     *
+     * @param args   原始参数对象，必须是 object
+     * @param schema 已通过 validateSchema 的 input schema
+     * @return 补齐默认值后的新对象
+     */
     public static ObjectNode withDefaults(JsonNode args, JsonNode schema) {
         if (args == null || !args.isObject()) throw new IllegalArgumentException("args 必须是对象");
         ObjectNode result = args.deepCopy();
@@ -107,6 +121,7 @@ public final class ToolArguments {
         });
         return result;
     }
+    /** 递归为嵌套 object/array 填充默认值；其他值原样返回。 */
     private static JsonNode nestedDefaults(JsonNode value,JsonNode rule) {
         if(value.isObject() && rule.has("properties"))return withDefaults(value,rule);
         if(value.isArray() && rule.has("items")) {
@@ -116,6 +131,14 @@ public final class ToolArguments {
         return value;
     }
 
+    /**
+     * 校验实际参数：必填、未知参数（按 additionalProperties）、类型、枚举、范围与正则。
+     *
+     * @param args            实际参数对象
+     * @param schema          input schema
+     * @param allowReferences 为 true 时允许形如 {{node.field}} 的引用占位字符串跳过类型校验（规划期使用）
+     * @return 错误信息列表；为空表示校验通过
+     */
     public static List<String> validate(JsonNode args, JsonNode schema, boolean allowReferences) {
         List<String> errors = new ArrayList<>();
         if (args == null || !args.isObject()) return List.of("args 必须是对象");
@@ -135,6 +158,7 @@ public final class ToolArguments {
         return errors;
     }
 
+    /** @return JSON 值是否符合 schema 声明的类型 */
     private static boolean typeMatches(JsonNode value, String type) {
         return switch (type) {
             case "string" -> value.isTextual();
@@ -147,6 +171,7 @@ public final class ToolArguments {
         };
     }
 
+    /** 校验单个值并把错误追加到 errors；object/array 递归校验。 */
     private static void validateValue(String name, JsonNode value, JsonNode rule, List<String> errors) {
         if (!typeMatches(value, rule.path("type").asText())) {
             errors.add(name + " 类型必须为 " + rule.path("type").asText());

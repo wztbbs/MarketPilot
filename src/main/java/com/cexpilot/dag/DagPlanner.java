@@ -3,7 +3,7 @@ package com.cexpilot.dag;
 import com.cexpilot.config.DagConfig;
 import com.cexpilot.evidence.EvidenceBindingContext;
 import com.cexpilot.metric.MetricCatalog;
-import com.cexpilot.conversation.TaskState;
+import com.cexpilot.conversation.TaskVersion;
 import com.cexpilot.conversation.TaskScope;
 import com.cexpilot.metric.MetricPlanCompiler;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -130,69 +130,32 @@ public class DagPlanner {
         }
     }
 
-    public PlanOutcome plan(String question, String conversationContext, String traceId, TraceSink sink) {
-        return plan(question, conversationContext, traceId, sink, null, null);
+    public PlanOutcome plan(String question, String plannerContext, String traceId, TraceSink sink) {
+        return plan(question, plannerContext, traceId, sink, null, null);
     }
 
-    /**
-     * @param activeFrame    活动 QueryFrame（阶段一 c）；用于可选参数继承与程序侧变化审计
-     * @param requestContext 请求时间上下文；时间条件按消解后的绝对区间对账，需要本请求的基准时间与时区
-     */
-    public PlanOutcome plan(String question, String conversationContext, String traceId, TraceSink sink,
-                            com.cexpilot.conversation.QueryFrame activeFrame,
-                            com.cexpilot.runtime.RequestContext requestContext) {
-        return plan(question, conversationContext, traceId, sink, activeFrame, requestContext, null, List.of());
+    public PlanOutcome plan(String question, String plannerContext, String traceId, TraceSink sink,
+            TaskVersion currentVersion, com.cexpilot.runtime.RequestContext requestContext) {
+        return plan(question, plannerContext, traceId, sink, currentVersion, requestContext, null, List.of());
     }
-
-    public PlanOutcome plan(String question, String conversationContext, String traceId, TraceSink sink,
-                            com.cexpilot.conversation.QueryFrame activeFrame,
-                            com.cexpilot.runtime.RequestContext requestContext,
-                            EvidenceBindingContext evidenceContext) {
-        return plan(question, conversationContext, traceId, sink, activeFrame, requestContext,
-                evidenceContext, List.of());
+    public PlanOutcome plan(String question, String plannerContext, String traceId, TraceSink sink,
+            TaskVersion currentVersion, com.cexpilot.runtime.RequestContext requestContext,
+            EvidenceBindingContext evidenceContext) {
+        return plan(question, plannerContext, traceId, sink, currentVersion, requestContext, evidenceContext, List.of());
     }
-
-    /**
-     * @param evidenceContext 历史事实绑定上下文（阶段二）：非 null 时校验 pinned_result 的 evidence_ref
-     *                        并把通过校验的 ExecutionBindings 挂到 PlanOutcome
-     * @param taskIndex       可回访任务/版本候选：RESUME 时按 task_ref/state_ref 定位
-     *                        历史状态，服务端校验候选归属；新协议用候选别名，旧轮次引用仅作兼容
-     */
-    public PlanOutcome plan(String question, String conversationContext, String traceId, TraceSink sink,
-                            com.cexpilot.conversation.QueryFrame activeFrame,
-                            com.cexpilot.runtime.RequestContext requestContext,
-                            EvidenceBindingContext evidenceContext,
-                            List<com.cexpilot.conversation.TaskSnapshot> taskIndex) {
-        return plan(question, conversationContext, traceId, sink, activeFrame, requestContext, evidenceContext,
-                taskIndex, activeFrame == null ? null : TaskState.legacy(activeFrame, 0, activeFrame.originalQuestion()));
+    public PlanOutcome plan(String question, String plannerContext, String traceId, TraceSink sink,
+            TaskVersion currentVersion, com.cexpilot.runtime.RequestContext requestContext,
+            EvidenceBindingContext evidenceContext, List<com.cexpilot.conversation.TaskVersionCandidate> taskIndex) {
+        return plan(question, plannerContext, traceId, sink, currentVersion, requestContext, evidenceContext, taskIndex, false, null);
     }
-
-    public PlanOutcome plan(String question, String conversationContext, String traceId, TraceSink sink,
-                            com.cexpilot.conversation.QueryFrame activeFrame,
-                            com.cexpilot.runtime.RequestContext requestContext, EvidenceBindingContext evidenceContext,
-                            List<com.cexpilot.conversation.TaskSnapshot> taskIndex, TaskState currentTask) {
-        return plan(question, conversationContext, traceId, sink, activeFrame, requestContext, evidenceContext,
-                taskIndex, currentTask, false);
-    }
-
-    public PlanOutcome plan(String question, String conversationContext, String traceId, TraceSink sink,
-                            com.cexpilot.conversation.QueryFrame activeFrame,
-                            com.cexpilot.runtime.RequestContext requestContext, EvidenceBindingContext evidenceContext,
-                            List<com.cexpilot.conversation.TaskSnapshot> taskIndex, TaskState currentTask,
-                            boolean clarificationSubmission) {
-        return plan(question,conversationContext,traceId,sink,activeFrame,requestContext,evidenceContext,
-                taskIndex,currentTask,clarificationSubmission,null);
-    }
-
-    /** 原始输入仅用于模型消息呈现；question 仍是编译校验使用的独立查询目标。 */
-    public PlanOutcome plan(String question, String conversationContext, String traceId, TraceSink sink,
-                            com.cexpilot.conversation.QueryFrame activeFrame,
-                            com.cexpilot.runtime.RequestContext requestContext, EvidenceBindingContext evidenceContext,
-                            List<com.cexpilot.conversation.TaskSnapshot> taskIndex, TaskState currentTask,
-                            boolean clarificationSubmission, String originalQuestion) {
-        TaskScope lastScope = TaskScope.current(currentTask);
+    /** 原始输入用于消息呈现；question 是本轮编译校验使用的独立查询目标。 */
+    public PlanOutcome plan(String question, String plannerContext, String traceId, TraceSink sink,
+            TaskVersion currentVersion, com.cexpilot.runtime.RequestContext requestContext,
+            EvidenceBindingContext evidenceContext, List<com.cexpilot.conversation.TaskVersionCandidate> taskIndex,
+            boolean clarificationSubmission, String originalQuestion) {
+        TaskScope lastScope = TaskScope.current(currentVersion);
         int maxToolCalls = llmConfig.getMaxToolCalls();
-        String systemPrompt = systemPrompt(conversationContext);
+        String systemPrompt = systemPrompt(plannerContext);
         var requestBudget=com.cexpilot.runtime.QueryBudget.current();
         if(requestBudget!=null && !requestBudget.config().isAdaptiveEnabled())systemPrompt+="\n本次 adaptive 已关闭，必须使用 single 并说明无法完成的结果驱动子问题。";
         JsonNode responseFormat = plannerResponseFormat();
@@ -232,9 +195,9 @@ public class DagPlanner {
                 PlanDecision decision = repairingClarification
                         ? evaluateClarificationRepair(response.content(), traceId, sink).withScope(lastScope)
                         : evaluateResponse(response.content(), maxToolCalls, traceId, sink,
-                                activeFrame, requestContext, evidenceContext, attempt, pinnedRequirements, taskIndex, currentTask, question, clarificationSubmission);
-                if (clarificationSubmission && currentTask != null) {
-                    decision = withSubmittedValues(decision, currentTask.clarificationAnswers());
+                                requestContext, evidenceContext, attempt, pinnedRequirements, taskIndex, currentVersion, question, clarificationSubmission);
+                if (clarificationSubmission && currentVersion != null) {
+                    decision = withSubmittedValues(decision, currentVersion.clarificationAnswers());
                 }
                 if (decision.taskScope() != null) lastScope = decision.taskScope();
                 if (decision.error() == null) {
@@ -270,7 +233,7 @@ public class DagPlanner {
                     lastError = decision.error();
                     if (attempt == attempts) break;
                     repairingClarification = true;
-                    messages = clarificationRepairMessages(question, originalQuestion, conversationContext, response.content(), lastError);
+                    messages = clarificationRepairMessages(question, originalQuestion, plannerContext, response.content(), lastError);
                     responseFormat = clarificationRepairFormat(responseFormat);
                     continue;
                 }
@@ -427,11 +390,10 @@ public class DagPlanner {
 
     private PlanDecision evaluateResponse(String content, int maxToolCalls,
                                           String traceId, TraceSink sink,
-                                          com.cexpilot.conversation.QueryFrame activeFrame,
                                           com.cexpilot.runtime.RequestContext requestContext,
                                           EvidenceBindingContext evidenceContext,
                                           int attempt, PinnedRequirements pinnedRequirements,
-                                          List<com.cexpilot.conversation.TaskSnapshot> taskIndex, TaskState currentTask, String question, boolean clarificationSubmission) {
+                                          List<com.cexpilot.conversation.TaskVersionCandidate> taskIndex, TaskVersion currentVersion, String question, boolean clarificationSubmission) {
         JsonNode parsed;
         try {
             parsed = LlmJson.parse(content);
@@ -451,24 +413,25 @@ public class DagPlanner {
             sink.record(TraceEvent.plan(traceId, parsed.toString(), null));
             return PlanDecision.accepted(false, textOrNull(parsed.path("reply")), null);
         }
-        return evaluateInDomainResponse(parsed, maxToolCalls, traceId, sink, activeFrame, requestContext,
-                evidenceContext, attempt, pinnedRequirements, taskIndex, currentTask, question, clarificationSubmission);
+        return evaluateInDomainResponse(parsed, maxToolCalls, traceId, sink, requestContext,
+                evidenceContext, attempt, pinnedRequirements, taskIndex, currentVersion, question, clarificationSubmission);
     }
 
     private PlanDecision evaluateInDomainResponse(JsonNode parsed, int maxToolCalls,
                                                   String traceId, TraceSink sink,
-                                                  com.cexpilot.conversation.QueryFrame activeFrame,
                                                   com.cexpilot.runtime.RequestContext requestContext,
                                                   EvidenceBindingContext evidenceContext,
                                                   int attempt, PinnedRequirements pinnedRequirements,
-                                                  List<com.cexpilot.conversation.TaskSnapshot> taskIndex, TaskState currentTask, String question, boolean clarificationSubmission) {
+                                                  List<com.cexpilot.conversation.TaskVersionCandidate> taskIndex, TaskVersion currentVersion, String question, boolean clarificationSubmission) {
         TaskScope selected;
-        try { selected = clarificationSubmission ? TaskScope.current(currentTask) : selectTask(parsed, currentTask, taskIndex); }
+        try { selected = clarificationSubmission ? TaskScope.current(currentVersion) : selectTask(parsed, currentVersion, taskIndex); }
         catch (IllegalArgumentException e) {
             return PlanDecision.clarification(e.getMessage()).withScope(
-                    currentTask != null && !currentTask.dialogue().isEmpty()
-                            ? TaskScope.current(currentTask) : new TaskScope(TaskScope.Action.NEW, null));
+                    currentVersion != null && !currentVersion.dialogue().isEmpty()
+                            ? TaskScope.current(currentVersion) : new TaskScope(TaskScope.Action.NEW, null));
         }
+        ((ObjectNode) parsed).put("task_action", selected.action().name());
+        if (selected.action() != TaskScope.Action.RESUME) ((ObjectNode) parsed).remove("candidate_ref");
         String reply = textOrNull(parsed.path("reply"));
         // 有效结构化列表本身就是澄清决策，兼容模型漏写 needs_clarification；绝不执行附带计划。
         JsonNode clarifyNode = parsed.path("clarify");
@@ -497,7 +460,7 @@ public class DagPlanner {
             return evaluateReplyWithoutPlan(parsed, reply, traceId, sink).withScope(selected);
         }
         var context = requestContext == null ? null : selected.executionContext(requestContext);
-        return validatePlan(parsed, reply, maxToolCalls, traceId, sink, selected.frame(), context,
+        return validatePlan(parsed, reply, maxToolCalls, traceId, sink, selected.base(), context,
                 evidenceContext, attempt, pinnedRequirements, question).withScope(selected);
     }
 
@@ -533,32 +496,30 @@ public class DagPlanner {
         return trimmed.isEmpty() ? null : trimmed;
     }
 
-    private static TaskScope selectTask(JsonNode parsed, TaskState current,
-            List<com.cexpilot.conversation.TaskSnapshot> candidates) {
+    private static TaskScope selectTask(JsonNode parsed, TaskVersion current,
+            List<com.cexpilot.conversation.TaskVersionCandidate> candidates) {
         String action = textOrNull(parsed.path("task_action"));
-        if (action == null) action = parsed.path("new_frame").asBoolean(false) ? "NEW" : "CONTINUE";
+        if (action == null) action = current == null ? "NEW" : "CONTINUE";
         TaskScope.Action type;
         try { type = TaskScope.Action.valueOf(action.toUpperCase(java.util.Locale.ROOT)); }
-        catch (Exception e) { throw new IllegalArgumentException("请确认您要继续当前任务、开启新任务，还是回到哪个历史任务。"); }
-        String ref = normalizeRef(textOrNull(parsed.path("task_ref")));
-        String stateRef = normalizeRef(textOrNull(parsed.path("state_ref")));
+        catch (Exception e) { throw new IllegalArgumentException("task_action 必须是 NEW、CONTINUE 或 RESUME"); }
+        if (parsed.has("task_ref") || parsed.has("state_ref") || parsed.has("new_frame"))
+            throw new IllegalArgumentException("任务选择只接受 task_action 和 candidate_ref，不接受旧引用字段");
+        String ref = normalizeRef(textOrNull(parsed.path("candidate_ref")));
         if (type == TaskScope.Action.NEW) {
-            if (ref != null || stateRef != null) throw new IllegalArgumentException("新任务不能同时引用历史任务，请明确要查询的新问题。");
+            if (ref != null) throw new IllegalArgumentException("新任务不能引用历史版本");
             return new TaskScope(type, null);
         }
         if (type == TaskScope.Action.CONTINUE) {
-            if (stateRef != null) throw new IllegalArgumentException("回到历史版本请使用 RESUME，并选择对应 state_ref。");
-            if (ref != null && (current == null || candidates.stream().noneMatch(t -> t.taskRef().equals(ref)
-                    && t.state().frameId().equals(current.frameId())))) {
-                throw new IllegalArgumentException("您指定的不是当前任务，请确认要回到哪个历史任务。");
-            }
-            return TaskScope.current(current);
+            if (ref != null) throw new IllegalArgumentException("CONTINUE 使用当前最新版本；指定版本请使用 RESUME");
+            if (current == null) throw new IllegalArgumentException("没有当前任务，请使用 NEW");
+            return new TaskScope(type, current);
         }
-        var matched = candidates.stream().filter(t -> ref != null && (t.taskRef().equals(ref) || t.turnId().equals(ref)))
-                .filter(t -> stateRef == null || t.stateRef().equals(stateRef))
-                .max(java.util.Comparator.comparingLong(t -> t.state().version())).orElse(null);
-        if (matched == null) throw new IllegalArgumentException("无法定位 task_ref/state_ref 所指的历史任务或版本，请说明要回到哪个问题。");
-        return new TaskScope(type, matched.state());
+        var matched = candidates.stream().filter(t -> ref != null && t.candidateRef().equals(ref)).findFirst().orElse(null);
+        if (matched == null) throw new IllegalArgumentException("无法定位 candidate_ref 指向的任务版本，请说明要回到哪个问题");
+        if (current != null && !current.conversationId().equals(matched.taskVersion().conversationId()))
+            throw new IllegalArgumentException("版本候选不属于当前会话");
+        return new TaskScope(type, matched.taskVersion());
     }
 
     private PlanDecision evaluateReplyWithoutPlan(JsonNode parsed, String reply,
@@ -582,15 +543,16 @@ public class DagPlanner {
 
     private PlanDecision validatePlan(JsonNode parsed, String reply, int maxToolCalls,
                                       String traceId, TraceSink sink,
-                                      com.cexpilot.conversation.QueryFrame activeFrame,
+                                      TaskVersion baseVersion,
                                       com.cexpilot.runtime.RequestContext requestContext,
                                       EvidenceBindingContext evidenceContext,
                                       int attempt, PinnedRequirements pinnedRequirements, String question) {
+        var activeDefinition = baseVersion == null ? null : baseVersion.queryDefinition();
         String error;
         try {
             com.cexpilot.metric.CompiledPlan compiled =
                     new ConditionProvenanceResolver().resolve(compiler, parsed.path("plan"),
-                            com.fasterxml.jackson.databind.node.MissingNode.getInstance(), parsed.path("condition_updates"), question, activeFrame, requestContext,
+                            com.fasterxml.jackson.databind.node.MissingNode.getInstance(), parsed.path("condition_updates"), question, baseVersion, requestContext,
                             Math.min(dagConfig.getMaxNodes(), maxToolCalls), warning -> {
                                 log.warn("规划条件标注降级 traceId={} path={} code={}: {}", traceId,
                                         warning.path(), warning.code(), warning.message());
@@ -616,8 +578,8 @@ public class DagPlanner {
             errors.addAll(new FundingAggregationValidator().check(question, compiled));
             if (errors.isEmpty()) {
                 // Changes are derived by the program for audit only, never a repair requirement.
-                if (activeFrame != null) {
-                    var actualChanges = inheritanceValidator.auditChanges(activeFrame, compiled, requestContext);
+                if (activeDefinition != null) {
+                    var actualChanges = inheritanceValidator.auditChanges(activeDefinition, compiled, requestContext);
                     sink.record(new TraceEvent(traceId,"QUERY_DIFF","inheritance_validator",null,
                             MAPPER.createObjectNode().set("actual_changes",MAPPER.valueToTree(actualChanges)).toString(),
                             null,null,null,null,null,null));
@@ -705,7 +667,8 @@ public class DagPlanner {
         for (com.cexpilot.metric.CalculationRequest c : compiled.logicalPlan().calculations()) {
             calculations.addObject().put("id", c.id()).put("operator", c.operator());
         }
-        out.put("new_frame", parsed.path("new_frame").asBoolean(false));
+        out.put("task_action", parsed.path("task_action").asText());
+        if (parsed.hasNonNull("candidate_ref")) out.set("candidate_ref", parsed.path("candidate_ref"));
         return out.toString();
     }
 
@@ -779,14 +742,14 @@ public class DagPlanner {
         }
     }
 
-    private String systemPrompt(String conversationContext) {
+    private String systemPrompt(String plannerContext) {
         return prompts.render(PROMPT_NAME, Map.of(
                 "concepts", catalog.concepts(),
                 "metrics", catalog.describeMetrics(),
                 "operators", catalog.describeOperators(registry),
                 "max_nodes", String.valueOf(Math.min(dagConfig.getMaxNodes(), llmConfig.getMaxToolCalls())),
                 "max_depth", String.valueOf(dagConfig.getMaxDepth()),
-                "conversation_context", conversationContext == null ? "" : conversationContext));
+                "conversation_context", plannerContext == null ? "" : plannerContext));
     }
 
     /** 后续规划只观察和提出增量；不复用首轮 task_action，也不重新选择会话任务。 */

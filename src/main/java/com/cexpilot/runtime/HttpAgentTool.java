@@ -36,7 +36,17 @@ public final class HttpAgentTool implements AgentTool {
             if(Set.of("object","array").contains(rule.path("type").asText()))throw new IllegalArgumentException("GET Tool 仅支持标量参数");
     }
     @Override public String name(){return definition.name();}
+    /** @return 工具描述+输入/输出 schema+HTTP 配置的指纹，契约任何变化都会改变该值 */
     public String contractVersion(){return PromptStore.fingerprint(definition.description()+":"+definition.inputSchema()+":"+definition.outputSchema()+":"+definition.http());}
+    /**
+     * 执行一次只读 HTTP 工具调用：校验身份/授权与入参，按定义发起 GET/POST，
+     * 校验响应信封（status/data/evidence）、防凭证回显，并按超时与最大尝试次数重试。
+     * 每次尝试都会向 NodeTraceCollector 记录一条 http_tool_attempt 事件。
+     *
+     * @param args    模型给出的参数（此处再做一次 schema 校验并应用默认值）
+     * @param context 调用上下文；agentId/visitorId/conversationId/traceId 任一非法即 DENIED
+     * @return 成功（OK/EMPTY）时带 data 与 provenance 的结果；失败时仅有 status，data/provenance 为 null
+     */
     @Override public ToolResult execute(JsonNode args,ToolContext context) {
         if(context==null || context.agentId()==null || !context.allowedTools().contains(name())
                 || context.requestTime()==null || context.timezone()==null || !identity(context.visitorId()) || !identity(context.conversationId()) || !identity(context.traceId()))return fail("DENIED");
@@ -113,6 +123,15 @@ public final class HttpAgentTool implements AgentTool {
         }
         return fail("DEPENDENCY_FAILED");
     }
+    /**
+     * 校验并组装证据元数据：source/observed_at/valid_until/unit/definition_version 必须齐全，
+     * observed_at 不得在未来，valid_until 按 maxAgeMs 封顶且必须仍未过期。
+     *
+     * @param input   响应信封中的 evidence 节点
+     * @param context 调用上下文（agentId 写入 provenance）
+     * @param args    实际请求参数（写入 provenance.parameters）
+     * @return 组装后的 provenance 节点；过期抛 StaleEvidence，其他非法抛 IllegalArgumentException
+     */
     private ObjectNode provenance(JsonNode input,ToolContext context,JsonNode args) {
         for(String key:List.of("source","observed_at","valid_until","unit","definition_version"))
             if(!input.path(key).isTextual() || input.path(key).asText().isBlank() || input.path(key).asText().length()>256)throw new IllegalArgumentException("缺少证据元数据");
@@ -126,6 +145,7 @@ public final class HttpAgentTool implements AgentTool {
                 .put("service_id",definition.http().serviceId()).put("contract_version",contractVersion()).put("agent_id",context.agentId());
         result.set("parameters",args.deepCopy());return result;
     }
+    /** 深度扫描响应 JSON（含对象键），检测是否回显了服务凭证；secret 为空串直接返回 false。 */
     private static boolean containsSecret(JsonNode root,String secret) {
         if(secret.isEmpty())return false;
         var pending=new ArrayDeque<JsonNode>();pending.add(root);
@@ -139,12 +159,19 @@ public final class HttpAgentTool implements AgentTool {
         }
         return false;
     }
+    /** 构造仅有 status 的失败结果（data/provenance 为 null）。 */
     private static ToolResult fail(String status){return ToolResult.http(status,null,null);}
+    /** @return 身份标识是否合法：非空、仅含字母数字及 _ . : -、长度 1~128 */
     private static boolean identity(String value){return value!=null && value.matches("[A-Za-z0-9_.:-]{1,128}");}
+    /** URL 查询参数值编码。 */
     private static String encode(String value){return URLEncoder.encode(value,StandardCharsets.UTF_8);}
+    /** @return 异常链中是否存在指定类型的 cause */
     private static boolean hasCause(Throwable error,Class<?> type){for(Throwable cause=error;cause!=null;cause=cause.getCause())if(type.isInstance(cause))return true;return false;}
+    /** 证据已过期的内部信号异常。 */
     private static class StaleEvidence extends RuntimeException {}
+    /** 响应体超过 maxResponseBytes 的内部信号异常。 */
     private static class TooLarge extends IOException {}
+    /** 限制响应体大小的 BodySubscriber：超过 limit 即取消订阅并以 TooLarge 失败。 */
     private static final class LimitedBody implements HttpResponse.BodySubscriber<byte[]> {
         private final CompletableFuture<byte[]> future=new CompletableFuture<>();
         private final ByteArrayOutputStream bytes=new ByteArrayOutputStream();
@@ -163,6 +190,10 @@ public final class HttpAgentTool implements AgentTool {
         public void onError(Throwable error){future.completeExceptionally(error);}
         public void onComplete(){future.complete(bytes.toByteArray());}
     }
+    /**
+     * 校验输入 schema 的安全约束：object 必须封闭（显式 additionalProperties=false）并声明 properties，
+     * 且任何层级不得声明身份/连接类字段（userId、token、url、secret 等）。
+     */
     private static void strictInput(JsonNode schema) {
         if("object".equals(schema.path("type").asText())) {
             if(!schema.path("properties").isObject() || !schema.has("additionalProperties") || schema.path("additionalProperties").asBoolean())
@@ -175,6 +206,7 @@ public final class HttpAgentTool implements AgentTool {
             });
         } else if("array".equals(schema.path("type").asText()))strictInput(schema.path("items"));
     }
+    /** 校验输出 schema 的每个节点都显式声明 type（不允许动态类型），递归检查嵌套结构。 */
     private static void strictOutput(JsonNode schema) {
         if(!schema.has("type"))throw new IllegalArgumentException("HTTP output 不允许动态类型");
         if(schema.path("properties").isObject())schema.path("properties").forEach(HttpAgentTool::strictOutput);

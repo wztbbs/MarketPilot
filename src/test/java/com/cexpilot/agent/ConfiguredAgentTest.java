@@ -52,22 +52,40 @@ class ConfiguredAgentTest {
         Script(String... responses){outputs.addAll(List.of(responses));}
         public ChatResponse chat(List<ChatMessage> messages,List<ToolSpec> tools){assertNull(tools);calls.add(List.copyOf(messages));String output=outputs.remove();if(output.equals("ERROR"))throw new IllegalStateException("offline");return new ChatResponse(output,List.of(),10,5);}
     }
-    ConfiguredAgentFactory factory(String agent,String tool,Script model) {
-        return factory(agent,List.of(tool),model);
+    ConfiguredAgentFactory factory(String agent,String tool) {
+        return factory(agent,List.of(tool));
     }
-    ConfiguredAgentFactory factory(String agent,List<String> definitions,Script model) {
+    ConfiguredAgentFactory factory(String agent,List<String> definitions) {
         var resources=loader(definitions,List.of(agent));
         var tools=new ToolRegistry(List.of(),ToolDefinitionLoader.load(resources),services(server.getAddress().getPort()));
-        var prompts=new PromptStore(resources);return new ConfiguredAgentFactory(resources,tools,prompts,new PlanningLlm(model,new LlmConfig(),prompts),evidence);
+        return new ConfiguredAgentFactory(resources,tools,new PromptStore(resources));
     }
     ExecutionResult run(String agent,Script model) {
-        return dispatcher(agent,model).execute("查BTC的模拟参考值","历史","trace",events::add,deltas::add,new RequestContext(ZoneOffset.UTC,Instant.now()),null,null,
-                null,new EvidenceSession("conversation","turn"),JSON.createObjectNode(),route->assertEquals("reference",route),"visitor");
+        return dispatcher(agent,model).execute(AgentExecutionRequest.builder("查BTC的模拟参考值","trace",events::add)
+                .history("历史").delta(deltas::add).requestContext(new RequestContext(ZoneOffset.UTC,Instant.now()))
+                .session(new EvidenceSession("conversation","turn")).routingState(JSON.createObjectNode())
+                .selectedAgent(route->assertEquals("reference",route)).visitor("visitor").build());
     }
     AgentDispatcher dispatcher(String agent,Script model) {
         var resources=loader(List.of(TOOL),List.of(agent));var prompts=new PromptStore(resources);
-        var registry=new AgentRegistry(List.of(),factory(agent,TOOL,model));
-        return new AgentDispatcher(new IntentRouter(new PlanningLlm(model,new LlmConfig(),prompts),prompts),registry,new AgentContextAssembler());
+        var tools=new ToolRegistry(List.of(),ToolDefinitionLoader.load(resources),services(server.getAddress().getPort()));
+        var llm=new PlanningLlm(model,new LlmConfig(),prompts);
+        var registry=new AgentRegistry(List.of(),new ConfiguredAgentFactory(resources,tools,prompts));
+        return new AgentDispatcher(new IntentRouter(llm,prompts),registry,new AgentContextAssembler(),
+                new QueryExecutionConfig(),new HarnessRolloutConfig(),new AnalysisMonitorHandoff(),new ReactEngine(tools,prompts,llm,evidence));
+    }
+    @Test void declaredAgentExecutesOnlyThroughEngine() {
+        var declared=factory(AGENT,TOOL).create().get(0);
+        assertEquals(EngineKind.REACT,declared.engine());
+        assertThrows(IllegalStateException.class,()->declared.execute(null));
+        // 未装配引擎的 dispatcher：REACT 分发必须报明确错误而非 NPE
+        LlmClient model=(m,t)->new ChatResponse("{\"route\":\"reference\"}",List.of(),10,5);
+        var prompts=new PromptStore(loader(List.of(),List.of()));
+        var bare=new AgentDispatcher(new IntentRouter(new PlanningLlm(model,new LlmConfig(),prompts),prompts),
+                new AgentRegistry(List.of(declared)),new AgentContextAssembler());
+        var failure=assertThrows(ExecutionFailure.class,()->bare.execute(AgentExecutionRequest.builder("查BTC","t",e->{})
+                .requestContext(new RequestContext(ZoneOffset.UTC,Instant.now())).routingState(JSON.createObjectNode()).visitor("visitor").build()));
+        assertTrue(failure.getMessage().contains("ReactEngine 未装配"));
     }
     @Test void yamlOnlyAgentRoutesCallsPersistsFactsAndAnswersThroughSharedHarness() {
         var model=new Script("{\"route\":\"reference\"}","{\"action\":\"call\",\"tool\":\"reference.lookup\",\"arguments\":{\"symbol\":\"BTC\"}}",
@@ -109,10 +127,10 @@ class ConfiguredAgentTest {
                 "{\"action\":\"finish\",\"evidence_refs\":[\"e1\"]}","{\"answer\":\"虚构答案\",\"evidence_refs\":[\"e99\"]}");
         var result=run(AGENT,model);assertEquals("ANSWER_INVALID",result.agentPayload().path("stop_reason").asText());assertFalse(result.answer().contains("虚构"));
     }
-    @ParameterizedTest @ValueSource(strings={"mode","budget","missing_tool","duplicate_tool","missing_prompt","unknown_key","reserved_id","reserved_route","duplicate_yaml_key"})
+    @ParameterizedTest @ValueSource(strings={"engine","budget","missing_tool","duplicate_tool","missing_prompt","unknown_key","reserved_id","reserved_route","duplicate_yaml_key"})
     void invalidConfigurationFailsAtStartup(String kind) {
         String agent=switch(kind) {
-            case "mode" -> AGENT.replace("http_tool_loop","arbitrary_react");
+            case "engine" -> AGENT.replace("engine: react","engine: arbitrary_loop");
             case "budget" -> AGENT.replace("max_tool_calls: 3","max_tool_calls: 0");
             case "missing_tool" -> AGENT.replace("[reference.lookup]","[missing]");
             case "duplicate_tool" -> AGENT.replace("[reference.lookup]","[reference.lookup, reference.lookup]");
@@ -122,11 +140,11 @@ class ConfiguredAgentTest {
             case "reserved_route" -> AGENT.replace("route: reference","route: query");
             default -> AGENT+"enabled: false\n";
         };
-        assertThrows(RuntimeException.class,()->factory(agent,TOOL,new Script()).create());assertEquals(0,hits.get());
+        assertThrows(RuntimeException.class,()->factory(agent,TOOL).create());assertEquals(0,hits.get());
     }
     @Test void disabledAgentsAreNotAdvertisedAndVersionsAreDeterministic() {
-        assertTrue(factory(AGENT.replace("enabled: true","enabled: false"),TOOL,new Script()).create().isEmpty());
-        assertEquals(factory(AGENT,TOOL,new Script()).create().get(0).promptVersion(),factory(AGENT,TOOL,new Script()).create().get(0).promptVersion());
+        assertTrue(factory(AGENT.replace("enabled: true","enabled: false"),TOOL).create().isEmpty());
+        assertEquals(factory(AGENT,TOOL).create().get(0).promptVersion(),factory(AGENT,TOOL).create().get(0).promptVersion());
     }
     @Test void modelFailureAfterHttpPreservesActualToolCountsUsageAndFacts() {
         var model=new Script("{\"route\":\"reference\"}","{\"action\":\"call\",\"tool\":\"reference.lookup\",\"arguments\":{\"symbol\":\"BTC\"}}",
@@ -136,7 +154,7 @@ class ConfiguredAgentTest {
         assertEquals(1,failure.counters.routerLlmCalls());assertEquals(1,failure.counters.answerLlmCalls());
         assertNull(LlmUsage.totalCost(failure.counters.llmUsages()));assertEquals(1,failure.evidence.size());assertEquals(1,failure.counters.savedFactIds().size());
     }
-    @Test void realAskEndpointDispatchesConfiguredAgentAndKeepsQueryTaskStateSeparate() throws Exception {
+    @Test void realAskEndpointDispatchesConfiguredAgentAndKeepsQueryTaskVersionSeparate() throws Exception {
         var model=new Script("{\"route\":\"reference\"}","{\"action\":\"call\",\"tool\":\"reference.lookup\",\"arguments\":{\"symbol\":\"BTC\"}}",
                 "{\"action\":\"finish\",\"evidence_refs\":[\"e1\"]}","{\"answer\":\"模拟参考值为123 USDT\",\"evidence_refs\":[\"e1\"]}");
         var conversations=mock(ConversationService.class);
@@ -145,9 +163,9 @@ class ConfiguredAgentTest {
         when(conversations.getOrCreateConversation(any(),any(),any())).thenReturn("conversation");
         var turn=new ConversationService.TurnHandle(1,"turn",1);
         when(conversations.beginTurn(any(),any(),any(),any())).thenReturn(turn);
-        when(conversations.renderContext("conversation")).thenReturn("");
+        when(conversations.renderRecentDialogue("conversation")).thenReturn("");
         when(conversations.routingState("conversation")).thenReturn(JSON.createObjectNode());
-        when(contexts.buildPlannerInput("conversation")).thenReturn(new PlannerInput("",null));
+        when(contexts.buildPlanningContext("conversation")).thenReturn(new PlanningContext("",null));
         when(conversations.finishRoutedTurn(any(),any(),any(),any(),
                 any(),any(),any(),any(),any(),
                 any(),any(),any(),any(),any()))
@@ -169,12 +187,16 @@ class ConfiguredAgentTest {
         var model=new Script("{\"route\":\"reference\"}","{\"action\":\"call\",\"tool\":\"reference.lookup\",\"arguments\":{\"symbol\":\"BTC\"}}",
                 "{\"action\":\"call\",\"tool\":\"reference.detail\",\"arguments\":{\"symbol\":{\"$ref\":\"e1#/symbol\"}}}",
                 "{\"action\":\"finish\",\"evidence_refs\":[\"e2\"]}","{\"answer\":\"补查得到模拟记录\",\"evidence_refs\":[\"e2\"]}");
-        var prompts=new PromptStore(loader(List.of(),List.of()));
-        var factory=factory(agent,List.of(TOOL,TOOL.replace("name: reference.lookup","name: reference.detail")),model);
-        var registry=new AgentRegistry(List.of(),factory);
-        var dispatcher=new AgentDispatcher(new IntentRouter(new PlanningLlm(model,new LlmConfig(),prompts),prompts),registry,new AgentContextAssembler());
-        var result=dispatcher.execute("查模拟记录后补查详情","","trace",events::add,null,new RequestContext(java.time.ZoneOffset.UTC,Instant.now()),null,null,
-                null,new EvidenceSession("conversation","turn"),JSON.createObjectNode(),r->{},"visitor");
+        var resources=loader(List.of(TOOL,TOOL.replace("name: reference.lookup","name: reference.detail")),List.of(agent));
+        var tools=new ToolRegistry(List.of(),ToolDefinitionLoader.load(resources),services(server.getAddress().getPort()));
+        var prompts=new PromptStore(resources);
+        var llm=new PlanningLlm(model,new LlmConfig(),prompts);
+        var registry=new AgentRegistry(List.of(),new ConfiguredAgentFactory(resources,tools,prompts));
+        var dispatcher=new AgentDispatcher(new IntentRouter(llm,prompts),registry,new AgentContextAssembler(),
+                new QueryExecutionConfig(),new HarnessRolloutConfig(),new AnalysisMonitorHandoff(),new ReactEngine(tools,prompts,llm,evidence));
+        var result=dispatcher.execute(AgentExecutionRequest.builder("查模拟记录后补查详情","trace",events::add)
+                .requestContext(new RequestContext(java.time.ZoneOffset.UTC,Instant.now()))
+                .session(new EvidenceSession("conversation","turn")).routingState(JSON.createObjectNode()).visitor("visitor").build());
         assertEquals(2,hits.get());assertEquals(2,result.httpRequestCount());assertEquals(2,repository.rows.size());
         assertEquals("FINISHED",result.agentPayload().path("execution_status").asText());
     }

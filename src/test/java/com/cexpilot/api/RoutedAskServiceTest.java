@@ -1,6 +1,7 @@
 package com.cexpilot.api;
 
 import com.cexpilot.agent.AgentDispatcher;
+import com.cexpilot.agent.AgentExecutionRequest;
 import com.cexpilot.config.LlmConfig;
 import com.cexpilot.conversation.*;
 import com.cexpilot.dag.DagRuntime;
@@ -15,7 +16,6 @@ import org.springframework.core.task.SyncTaskExecutor;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import java.time.*;
 import java.util.List;
-import java.util.function.Consumer;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -36,9 +36,9 @@ class RoutedAskServiceTest {
                 mock(ObjectProvider.class),dispatcher);
         when(conversation.getOrCreateConversation(any(),any(),any())).thenReturn("c");
         when(conversation.beginTurn(any(),any(),any(),any())).thenReturn(turn);
-        when(conversation.renderContext(any())).thenReturn("");
+        when(conversation.renderRecentDialogue(any())).thenReturn("");
         when(conversation.routingState(any())).thenReturn(json.createObjectNode());
-        when(context.buildPlannerInput(any())).thenReturn(new PlannerInput("",null));
+        when(context.buildPlanningContext(any())).thenReturn(new PlanningContext("",null));
         when(conversation.finishRoutedTurn(any(),any(),any(),any(),any(),any(),any(),any(),any(),any(),any(),any(),any(),any()))
                 .thenReturn(new ConversationService.TaskCommit(false,null,0,null));
     }
@@ -48,8 +48,8 @@ class RoutedAskServiceTest {
         var outcome=new ExecutionResult("候选计划已生成",json.createArrayNode(),0,0,10,5,"SUCCEEDED",null,0,1,0,0,0,0,List.of())
                 .withLlmUsages(List.of(new LlmUsage("normal","fake",10,5,0.0))).withAgent("monitor",planning)
                 .withRouterUsages(List.of(new LlmUsage("normal","fake",3,2,0.0)));
-        when(dispatcher.execute(any(),any(),any(),any(),any(),any(),any(),any(),any(),any(),any(),any(),any())).thenAnswer(inv->{
-            Consumer<String> selected=inv.getArgument(11); selected.accept("monitor"); return outcome;
+        when(dispatcher.execute(any())).thenAnswer(inv->{
+            inv.getArgument(0,AgentExecutionRequest.class).selectedAgent().accept("monitor"); return outcome;
         });
         var response=service.ask(null,"监控BTC", "visitor");
         assertEquals("monitor",response.type()); assertEquals(1,response.routerLlmCalls());
@@ -60,8 +60,8 @@ class RoutedAskServiceTest {
         verify(conversation,never()).finishTaskTurn(any(),any(),any(),any(),any(),any(),any(),any(),any(),any(),any(),any());
     }
     @Test void monitorTransportFailureSavesMonitorFailureAndDoesNotPoisonQueryTask() {
-        when(dispatcher.execute(any(),any(),any(),any(),any(),any(),any(),any(),any(),any(),any(),any(),any())).thenAnswer(inv->{
-            Consumer<String> selected=inv.getArgument(11); selected.accept("monitor");
+        when(dispatcher.execute(any())).thenAnswer(inv->{
+            inv.getArgument(0,AgentExecutionRequest.class).selectedAgent().accept("monitor");
             throw new com.cexpilot.runtime.ExecutionFailure(new IllegalStateException("monitor timeout"),new com.cexpilot.runtime.TurnCounters(1,0,0,0,0,0,List.of())
                     .withLlmUsages(List.of(new LlmUsage("normal","fake",null,null,null)))
                     .withRouterUsages(List.of(new LlmUsage("normal","fake",3,2,0.0))));
@@ -76,8 +76,8 @@ class RoutedAskServiceTest {
         payload.putArray("clarify").addObject().put("key","base").put("label","币种").put("type","text");
         var result=new ExecutionResult("请补充币种",json.createArrayNode(),0,0,10,5,"NEEDS_CLARIFICATION","请补充币种",0,1,0,0,0,0,List.of())
                 .withAgent("query",payload);
-        when(dispatcher.execute(any(),any(),any(),any(),any(),any(),any(),any(),any(),any(),any(),any(),any())).thenAnswer(inv->{
-            Consumer<String> selected=inv.getArgument(11); selected.accept("query"); return result;
+        when(dispatcher.execute(any())).thenAnswer(inv->{
+            inv.getArgument(0,AgentExecutionRequest.class).selectedAgent().accept("query"); return result;
         });
         var response=service.ask(null,"比较两所Funding","visitor");
         assertEquals("base",response.clarify().get(0).key());

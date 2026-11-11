@@ -1,7 +1,7 @@
 package com.cexpilot.agent;
 
 import com.cexpilot.config.LlmConfig;
-import com.cexpilot.conversation.PlannerInput;
+import com.cexpilot.conversation.PlanningContext;
 import com.cexpilot.evidence.EvidenceSession;
 import com.cexpilot.llm.*;
 import com.cexpilot.prompt.PromptStore;
@@ -56,8 +56,10 @@ class AgentRegistryTest {
         var router=new IntentRouter(new PlanningLlm(client,new LlmConfig(),prompts),prompts);
         var dispatcher=new AgentDispatcher(router,new AgentRegistry(List.of(extra)),new AgentContextAssembler());
         var deltas=new ArrayList<String>(); var events=new ArrayList<TraceEvent>(); var selected=new AtomicReference<String>();
-        var result=dispatcher.execute("问题","历史","trace",events::add,deltas::add,REQUEST,null,null,
-                new PlannerInput("Query 私有数据",null),new EvidenceSession("c","turn"),JSON.createObjectNode(),selected::set,"visitor");
+        var result=dispatcher.execute(AgentExecutionRequest.builder("问题","trace",events::add)
+                .history("历史").delta(deltas::add).requestContext(REQUEST)
+                .planningContext(new PlanningContext("Query 私有数据",null)).session(new EvidenceSession("c","turn"))
+                .routingState(JSON.createObjectNode()).selectedAgent(selected::set).visitor("visitor").build());
         assertEquals("example",selected.get()); assertEquals("example",result.agentType());
         assertEquals(List.of("扩展回复"),deltas); assertEquals(1,result.routerLlmCalls()); assertEquals(1,calls.size());
         assertNull(seen.get().privateInput()); assertEquals("visitor",seen.get().visitor());
@@ -78,8 +80,8 @@ class AgentRegistryTest {
         var prompts=new PromptStore(new DefaultResourceLoader());
         var dispatcher=new AgentDispatcher(new IntentRouter(new PlanningLlm(client,new LlmConfig(),prompts),prompts),
                 new AgentRegistry(List.of(agent("example","example"))),new AgentContextAssembler());
-        var failure=assertThrows(ExecutionFailure.class,()->dispatcher.execute("问题","","t",e->{},
-                delta->{throw new IllegalStateException("closed");},REQUEST,null,null,null,null,null,r->{}));
+        var failure=assertThrows(ExecutionFailure.class,()->dispatcher.execute(AgentExecutionRequest.builder("问题","t",e->{})
+                .requestContext(REQUEST).delta(delta->{throw new IllegalStateException("closed");}).build()));
         assertEquals("closed",failure.getMessage()); assertEquals(1,failure.counters.routerLlmCalls());
         assertEquals(1,failure.counters.llmUsages().size()); assertNotNull(failure.evidence);
     }

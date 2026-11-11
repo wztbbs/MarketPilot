@@ -1,6 +1,7 @@
 package com.cexpilot.api;
 
 import com.cexpilot.agent.AgentDispatcher;
+import com.cexpilot.agent.AgentExecutionRequest;
 import com.cexpilot.config.LlmConfig;
 import com.cexpilot.conversation.*;
 import com.cexpilot.dag.DagRuntime;
@@ -80,13 +81,13 @@ class PresetReplyTest {
     }
     @Test void editedQuestionUsesNormalDispatcher() {
         String edited="你能实现哪些功能？帮我查 BTC 价格";
-        when(context.buildPlannerInput("c")).thenReturn(new PlannerInput("",null));
+        when(context.buildPlanningContext("c")).thenReturn(new PlanningContext("",null));
         when(conversation.finishRoutedTurn(any(),any(),any(),any(),any(),any(),any(),any(),any(),any(),any(),any(),any(),any()))
                 .thenReturn(new ConversationService.TaskCommit(false,null,0,null));
-        when(dispatcher.execute(any(),any(),any(),any(),any(),any(),any(),any(),any(),any(),any(),any(),any()))
+        when(dispatcher.execute(any()))
                 .thenReturn(new ExecutionResult("正常模型回答",json.createArrayNode(),0,0,10,5,"SUCCEEDED",null).withLlmUsages(List.of()));
         assertEquals("正常模型回答",service.ask("c",edited,"visitor").answer());
-        verify(dispatcher).execute(eq(edited),any(),any(),any(),any(),any(),any(),any(),any(),any(),any(),any(),any());
+        verify(dispatcher).execute(argThat(req->edited.equals(req.question())));
         verify(sink,never()).record(argThat(event->"STATIC_REPLY".equals(event.eventType())));
     }
 }

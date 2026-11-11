@@ -193,8 +193,8 @@ class ReplayTraceTest(unittest.TestCase):
     def test_current_parameter_protocol_replaces_legacy_schema_without_changing_plan_capabilities(self):
         plan_schema = {"type": "object", "properties": {"metric": {"enum": ["price.last"]}}}
         body = {"response_format": {"type": "json_schema", "json_schema": {"strict": True, "schema": {
-            "properties": {"plan": plan_schema, "explicit_conditions": {"type": "object"}, "changes": {"type": "array"}},
-            "required": ["plan", "explicit_conditions", "changes"]}}}}
+            "properties": {"plan": plan_schema, "explicit_conditions": {"type": "object"}, "changes": {"type": "array"}, "task_ref": {"type": "string"}, "state_ref": {"type": "string"}, "new_frame": {"type": "boolean"}},
+            "required": ["plan", "explicit_conditions", "changes", "task_ref", "state_ref", "new_frame"]}}}}
         untouched = copy.deepcopy(body)
         self.assertFalse(rp.refresh_parameter_protocol(body, "planner", keep_trace_schema=True))
         self.assertEqual(untouched, body)
@@ -207,7 +207,19 @@ class ReplayTraceTest(unittest.TestCase):
         self.assertNotIn("changes", schema["required"])
         self.assertEqual(["set", "reset"], schema["properties"]["condition_updates"]["additionalProperties"]["properties"]["interval"]["enum"])
         self.assertEqual(["single", "adaptive"], schema["properties"]["execution_mode"]["enum"])
+        self.assertIn("candidate_ref", schema["properties"])
+        self.assertIn("task_action", schema["properties"])
+        for obsolete in ("task_ref", "state_ref", "new_frame"):
+            self.assertNotIn(obsolete, schema["properties"])
+            self.assertNotIn(obsolete, schema["required"])
         self.assertFalse(rp.refresh_parameter_protocol(body, "planner"))
+
+    def test_old_task_candidate_context_stops_instead_of_guessing_new_references(self):
+        body = {"messages": [{"role": "system", "content": "【近期任务索引】task_ref=task_1，state_ref=task_1_v1"}],
+                "response_format": {"type": "json_schema", "json_schema": {"schema": {"properties": {"plan": {}}}}}}
+        with self.assertRaisesRegex(ValueError, "旧任务候选协议"):
+            rp.refresh_parameter_protocol(body, "planner")
+        self.assertFalse(rp.refresh_parameter_protocol(body, "planner", keep_trace_schema=True))
 
     def test_missing_key_or_wrong_trace_id_stops_before_llm(self):
         status, _, _, http = self.run_main(self.argv)

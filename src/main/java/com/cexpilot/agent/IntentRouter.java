@@ -8,12 +8,26 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.stereotype.Component;
 import java.util.*;
 
+/**
+ * 意图路由：根据用户问题与精简上下文选择目标 Agent（query/monitor/声明式 Agent/clarify）。
+ * 输出必须是合法 JSON 且 route 在已注册范围内；最多一次修复重试，仍失败则回落为固定澄清。
+ */
 @Component
 public class IntentRouter {
+    /** 路由提示词模板名。 */
     public static final String PROMPT="intent_router";
+    /**
+     * 路由决策结果。
+     *
+     * @param route            目标对外 route（query/monitor/...）或 "clarify"
+     * @param question         仅 clarify 时有值：向用户提出的澄清问题
+     * @param usages           本次路由的 LLM 用量（含修复重试）
+     * @param resolvedQuestion 仅 query 路由可有：指代消解后的独立问题；缺失时回落为原始问题
+     */
     public record Decision(String route,String question,List<LlmUsage> usages,String resolvedQuestion) {
         public Decision(String route,String question,List<LlmUsage> usages) { this(route,question,usages,null); }
     }
+    /** 路由失败时携带已累计用量的异常包装，供上层计入本轮计数。 */
     public static class Failure extends RuntimeException {
         public final List<LlmUsage> usages;
         Failure(RuntimeException cause,List<LlmUsage> usages) { super(cause); this.usages=List.copyOf(usages); }
@@ -21,10 +35,27 @@ public class IntentRouter {
     private final PlanningLlm llm;
     private final PromptStore prompts;
     public IntentRouter(PlanningLlm llm,PromptStore prompts) { this.llm=llm; this.prompts=prompts; }
+    /** @return 路由提示词的版本指纹 */
     public String promptVersion() { return prompts.version(PROMPT); }
+    /**
+     * 兼容入口：候选 Agent 固定为内置的 query 与 monitor。
+     *
+     * @see #route(String, JsonNode, String, TraceSink, List)
+     */
     public Decision route(String question,JsonNode context,String traceId,TraceSink sink) {
         return route(question,context,traceId,sink,List.of(MarketAnalysisAgent.DEFINITION,com.cexpilot.monitor.MonitorAgent.DEFINITION));
     }
+    /**
+     * 执行一次路由：拼装候选路由描述与上下文调用模型，校验输出 JSON；
+     * 输出非法时把错误反馈给模型重试一次，仍失败则返回固定的 clarify 兜底决策。
+     *
+     * @param question 用户原始问题
+     * @param context  Router 专用薄视图（{@link AgentContextAssembler#routerView}）
+     * @param traceId  本轮 Trace 标识
+     * @param sink     Trace 写入器；每次决策（含失败重试与兜底）都会落 ROUTE_DECISION 事件
+     * @param agents   本轮可选的候选 Agent 定义（已按灰度过滤）
+     * @return 路由决策；模型调用异常包装为 {@link Failure} 上抛
+     */
     public Decision route(String question,JsonNode context,String traceId,TraceSink sink,List<AgentDefinition> agents) {
         var allowedRoutes=new HashSet<String>(); allowedRoutes.add("clarify");
         var descriptions=new StringBuilder();
@@ -74,7 +105,7 @@ public class IntentRouter {
     private JsonNode orderedContext(JsonNode context) {
         if(context==null || !context.isObject()) return context;
         var ordered=new ObjectMapper().createObjectNode();
-        for(String key:List.of("current_agent","timezone","query_task","monitor_context"))
+        for(String key:List.of("current_agent","timezone"))
             if(context.has(key)) ordered.set(key,context.get(key));
         context.fields().forEachRemaining(field->{
             if(!ordered.has(field.getKey()) && !Set.of("recent_dialogue","request_time").contains(field.getKey()))

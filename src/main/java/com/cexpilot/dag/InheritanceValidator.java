@@ -1,6 +1,6 @@
 package com.cexpilot.dag;
 
-import com.cexpilot.conversation.QueryFrame;
+import com.cexpilot.conversation.QueryDefinition;
 import com.cexpilot.metric.CompiledPlan;
 import com.cexpilot.metric.EffectiveTarget;
 import com.cexpilot.runtime.RequestContext;
@@ -17,12 +17,8 @@ import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
 
-/**
- * 继承对账（设计文档 7.2）：new_frame=false 且存在活动 frame 时，逐字段比较
- * 本轮计划与 frame 有效条件的实际 diff，与 Planner 声明的 changes 对账；
- * 声明漏了实际变化的条件 → 返回具体错误进规划修复，修复耗尽则不强行执行。
- *
- * new_frame=true 不做对账（本期旧 frame 在成功提交时被简单覆盖，近期 frame 索引后续再做）。
+/** 所选版本查询定义与本轮编译条件的差异审计。NEW 没有继承基准。
+ * 当前主链通过 auditChanges 记录 QUERY_DIFF，不因模型漏报 changes 而拒绝合法查询。
  */
 public final class InheritanceValidator {
 
@@ -32,13 +28,13 @@ public final class InheritanceValidator {
     private final TimeRangeResolver timeResolver = new TimeRangeResolver(Clock.systemUTC());
 
     /**
-     * @return 对账失败的修复文案；一致、无活动 frame 或 frame 无 targets 时返回 null
+     * @return 对账失败的修复文案；一致、无活动 definition 或 definition 无 targets 时返回 null
      */
-    public String check(QueryFrame frame, CompiledPlan plan, Set<String> declaredChanges, RequestContext requestContext) {
-        if (frame == null || frame.targets().isEmpty() || requestContext == null) {
+    public String check(QueryDefinition definition, CompiledPlan plan, Set<String> declaredChanges, RequestContext requestContext) {
+        if (definition == null || definition.targets().isEmpty() || requestContext == null) {
             return null;
         }
-        Set<String> actualChanges = diffKeys(frame, plan, requestContext);
+        Set<String> actualChanges = diffKeys(definition, plan, requestContext);
         Set<String> missing = new TreeSet<>(actualChanges);
         missing.removeAll(declaredChanges);
         if (missing.isEmpty()) {
@@ -51,10 +47,10 @@ public final class InheritanceValidator {
     }
 
     /** Program audit: removing a same-exchange branch is not an exchange change. */
-    Set<String> auditChanges(QueryFrame frame, CompiledPlan plan, RequestContext context) {
-        if (frame == null || frame.targets().isEmpty() || context == null) return Set.of();
-        var changes = new TreeSet<>(diffKeys(frame,plan,context));
-        if (frame.targets().size() != plan.targets().size()) {
+    Set<String> auditChanges(QueryDefinition definition, CompiledPlan plan, RequestContext context) {
+        if (definition == null || definition.targets().isEmpty() || context == null) return Set.of();
+        var changes = new TreeSet<>(diffKeys(definition,plan,context));
+        if (definition.targets().size() != plan.targets().size()) {
             changes.add("targets");
             for (String field : List.of("exchange","base","metric")) {
                 java.util.function.Function<EffectiveTarget,String> key = switch(field) {
@@ -62,7 +58,7 @@ public final class InheritanceValidator {
                     case "base" -> InheritanceValidator::baseOf;
                     default -> EffectiveTarget::metric;
                 };
-                if (frame.targets().stream().map(key).collect(java.util.stream.Collectors.toSet())
+                if (definition.targets().stream().map(key).collect(java.util.stream.Collectors.toSet())
                         .equals(plan.targets().stream().map(key).collect(java.util.stream.Collectors.toSet()))) changes.remove(field);
             }
         }
@@ -70,14 +66,14 @@ public final class InheritanceValidator {
     }
 
     /**
-     * frame vs 本轮计划的实际变化条件键集合（R10 配对对账）：
+     * definition vs 本轮计划的实际变化条件键集合（R10 配对对账）：
      * 先按目标节点配对（未变条件优先，再按同所同币种 > 同所 > 同币种匹配），再逐对比较节点内条件；
-     * 配不上任何 frame 目标的计划目标视为新增、未被认领的 frame 目标视为删除，其
+     * 配不上任何 definition 目标的计划目标视为新增、未被认领的 definition 目标视为删除，其
      * exchange/base/metric 均计入变化。此前按字段集合比较，"币安BTC+OKX ETH → 币安ETH+OKX BTC"
      * 这类配对互换两侧集合完全相同，会漏检。
      */
-    Set<String> diffKeys(QueryFrame frame, CompiledPlan plan, RequestContext requestContext) {
-        List<EffectiveTarget> from = new java.util.ArrayList<>(frame.targets());
+    Set<String> diffKeys(QueryDefinition definition, CompiledPlan plan, RequestContext requestContext) {
+        List<EffectiveTarget> from = new java.util.ArrayList<>(definition.targets());
         List<EffectiveTarget> to = plan.targets();
         List<EffectiveTarget> matches = matchTargets(from, to);
         for (EffectiveTarget match : matches) if (match != null) from.remove(match);
@@ -112,7 +108,7 @@ public final class InheritanceValidator {
                     String.valueOf(match.includeUnclosed()), String.valueOf(planTarget.includeUnclosed()));
             comparePair(changed, "count", String.valueOf(match.count()), String.valueOf(planTarget.count()));
             comparePair(changed, "depth", String.valueOf(match.depth()), String.valueOf(planTarget.depth()));
-            if (timeChanged(frame, match, planTarget, requestContext)) changed.add("time");
+            if (timeChanged(definition, match, planTarget, requestContext)) changed.add("time");
         }
         if (!from.isEmpty()) { changed.add("exchange"); changed.add("base"); changed.add("metric"); }
         return changed;
@@ -215,34 +211,34 @@ public final class InheritanceValidator {
      * 不是 JSON 逐字比。滚动窗口（recent 6h 这类）时长相同视为同一条件延续——集合随"现在"滚动，
      * 跨轮消解必然得到不同区间，不能算用户修改。
      */
-    boolean timeChanged(QueryFrame frame, EffectiveTarget from, EffectiveTarget to,
+    boolean timeChanged(QueryDefinition definition, EffectiveTarget from, EffectiveTarget to,
                                 RequestContext requestContext) {
-        return timeChanged(frame, from, to, requestContext, false);
+        return timeChanged(definition, from, to, requestContext, false);
     }
 
     /** 来源必须有可证明的等价条件；消解失败不能当成继承成立。 */
-    boolean sameTimeRequirement(QueryFrame frame, EffectiveTarget from, EffectiveTarget to, RequestContext context) {
-        return !timeChanged(frame, from, to, context, true);
+    boolean sameTimeRequirement(QueryDefinition definition, EffectiveTarget from, EffectiveTarget to, RequestContext context) {
+        return !timeChanged(definition, from, to, context, true);
     }
 
-    private boolean timeChanged(QueryFrame frame, EffectiveTarget from, EffectiveTarget to,
+    private boolean timeChanged(QueryDefinition definition, EffectiveTarget from, EffectiveTarget to,
                                 RequestContext requestContext, boolean changedOnFailure) {
-        JsonNode frameTime = from.timeExpression();
+        JsonNode definitionTime = from.timeExpression();
         JsonNode planTime = to.timeExpression();
-        if (frameTime == null || planTime == null) {
-            return !java.util.Objects.equals(frameTime, planTime);
+        if (definitionTime == null || planTime == null) {
+            return !java.util.Objects.equals(definitionTime, planTime);
         }
-        if (frameTime.equals(planTime) || sameRollingWindow(frameTime, planTime)) {
+        if (definitionTime.equals(planTime) || sameRollingWindow(definitionTime, planTime)) {
             return false;
         }
         try {
-            TimeRange frameRange = timeResolver.resolve(frameZone(frame),
-                    TimeSpecParser.parse(frameTime), Instant.parse(frame.requestTime()));
+            TimeRange definitionRange = timeResolver.resolve(definitionZone(definition),
+                    TimeSpecParser.parse(definitionTime), Instant.parse(definition.requestTime()));
             TimeRange planRange = timeResolver.resolve(
                     requestContext.userZone() != null ? requestContext.userZone() : DEFAULT_ZONE,
                     TimeSpecParser.parse(planTime), requestContext.requestTime());
-            return !frameRange.startInclusive().equals(planRange.startInclusive())
-                    || !frameRange.endExclusive().equals(planRange.endExclusive());
+            return !definitionRange.startInclusive().equals(planRange.startInclusive())
+                    || !definitionRange.endExclusive().equals(planRange.endExclusive());
         } catch (Exception e) {
             // 无法消解时保持现有策略，由执行期时间校验处理。
             return changedOnFailure;
@@ -265,8 +261,8 @@ public final class InheritanceValidator {
                 && a.path("duration").equals(b.path("duration"));
     }
 
-    private static ZoneId frameZone(QueryFrame frame) {
-        return frame.timezone() != null ? ZoneId.of(frame.timezone()) : DEFAULT_ZONE;
+    private static ZoneId definitionZone(QueryDefinition definition) {
+        return definition.timezone() != null ? ZoneId.of(definition.timezone()) : DEFAULT_ZONE;
     }
 
 }

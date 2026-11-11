@@ -31,7 +31,7 @@ class DagRuntimeTest {
             String resolved=i==0?original:"查询 OKX BTC/USDT 永续昨天一整天的成交额。";
             var p=plan(metric("m1","trade.turnover","range_statistic",i==0?"binance":"okx"));
             var llm=new Script(envelope(p),"答案");
-            var input=new com.cexpilot.conversation.PlannerInput("",null).withResolvedQuestion(resolved);
+            var input=new com.cexpilot.conversation.PlanningContext("",null).withResolvedQuestion(resolved);
             var result=runtime(llm,registry()).execute(original,"","t",e->{},null,null,null,null,input,null);
             assertEquals(2,llm.calls.size());assertEquals(1,result.plannerLlmCalls());
             String system=llm.calls.get(0).get(0).content();systems.add(system);
@@ -352,7 +352,7 @@ class DagRuntimeTest {
         var store = seededStore("conv-1");
         var entries = com.cexpilot.evidence.EvidenceAssembler.assignRefs(
                 store.listReusable("conv-1", Instant.parse("2026-10-12T01:30:00Z")));
-        var plannerInput = new com.cexpilot.conversation.PlannerInput("", null, entries);
+        var plannerInput = new com.cexpilot.conversation.PlanningContext("", null, entries);
         var llm = new Script(envelope(plan(snapshotGroup("m1", "binance", "fact_1"))), "83000（昨日快照）");
         var trace = new ArrayList<TraceEvent>();
         // Provider 一旦调用即失败：证明 REUSE 不取数
@@ -382,7 +382,7 @@ class DagRuntimeTest {
 
     @Test void freshFetchIsSavedAsFactBeforeAnswer() throws Exception {
         var store = new com.cexpilot.evidence.EvidenceStore(new com.cexpilot.evidence.InMemoryEvidenceRepository());
-        var plannerInput = new com.cexpilot.conversation.PlannerInput("", null, List.of());
+        var plannerInput = new com.cexpilot.conversation.PlanningContext("", null, List.of());
         var llm = new Script(envelope(plan(snapshotGroup("m1", "binance", null))), "最新价 90000");
         var ticker = namedProvider(TickerMetricProvider.NAME, TickerMetric::valueOf, (q, c) ->
                 new MetricResult.Point(new MetricResult.SnapshotMetadata(
@@ -410,7 +410,7 @@ class DagRuntimeTest {
         var store = seededStore("conv-1");
         var entries = com.cexpilot.evidence.EvidenceAssembler.assignRefs(
                 store.listReusable("conv-1", Instant.parse("2026-10-12T01:30:00Z")));
-        var plannerInput = new com.cexpilot.conversation.PlannerInput("", null, entries);
+        var plannerInput = new com.cexpilot.conversation.PlanningContext("", null, entries);
         var p = plan(snapshotGroup("m1", "binance", "fact_1"));
         calculation(p, "c1", "avg", "{\"kind\":\"values\",\"values\":[\"{{m1.binance.value}}\",100]}");
         var llm = new Script(envelope(p), "83000 加 100 的均值");
@@ -445,7 +445,7 @@ class DagRuntimeTest {
 
     @Test void 计数拆分_真实取数与算子分开计且新事实入列表() throws Exception {
         var store = new com.cexpilot.evidence.EvidenceStore(new com.cexpilot.evidence.InMemoryEvidenceRepository());
-        var plannerInput = new com.cexpilot.conversation.PlannerInput("", null, List.of());
+        var plannerInput = new com.cexpilot.conversation.PlanningContext("", null, List.of());
         var p = plan(snapshotGroup("m1", "binance", null));
         calculation(p, "c1", "avg", "{\"kind\":\"values\",\"values\":[\"{{m1.binance.value}}\",100]}");
         var llm = new Script(envelope(p), "90000 加 100 的均值");
@@ -468,13 +468,11 @@ class DagRuntimeTest {
     @Test void 回访执行继承所选任务时区但最新价使用本轮时间() {
         var compiler = new MetricPlanCompiler(new MetricCatalog(LOADER), registry(), catalogProviders());
         var compiled = compiler.compileFull(plan(snapshotGroup("m1", "binance", null)), 8);
-        var frame = com.cexpilot.conversation.QueryFrame.fromCompiledPlan("conv-1", "old-turn", "BTC 当前价",
-                Instant.parse("2026-10-12T01:00:00Z"), ZoneId.of("America/New_York"), compiled, null);
-        var state = com.cexpilot.conversation.TaskState.legacy(frame, 1, "BTC 当前价");
-        var input = new com.cexpilot.conversation.PlannerInput("", null, List.of(), 0,
-                List.of(com.cexpilot.conversation.TaskSnapshot.candidate(state, "task_1")), null);
+        var frame = com.cexpilot.conversation.ContextFixtures.executed("test-task", "conv-1", 1, "old-turn", "BTC 当前价", Instant.parse("2026-10-12T01:00:00Z"), ZoneId.of("America/New_York"), compiled, null, "SUCCEEDED");
+        var state = frame;
+        var input = new com.cexpilot.conversation.PlanningContext("", null, List.of(), 0, List.of(new com.cexpilot.conversation.TaskVersionCandidate("task_1" + "_v" + state.version(), state)));
         var env = (ObjectNode)json(envelope(compiled.logicalPlanJson()));
-        env.put("task_action", "RESUME").put("task_ref", "task_1").put("state_ref", "task_1_v1");
+        env.put("task_action", "RESUME").put("candidate_ref", "task_1_v1");
         var captured = new java.util.concurrent.atomic.AtomicReference<RequestContext>();
         var ticker = namedProvider(TickerMetricProvider.NAME, TickerMetric::valueOf, (q,c) -> {
             captured.set(c);
@@ -496,7 +494,7 @@ class DagRuntimeTest {
         // 4.3：失败不等于统计归零——Answer 抛异常时，planner/取数计数与失败前已保存的事实
         // 随 ExecutionFailure 带出，编排层失败路径据此落 trace
         var store = new com.cexpilot.evidence.EvidenceStore(new com.cexpilot.evidence.InMemoryEvidenceRepository());
-        var plannerInput = new com.cexpilot.conversation.PlannerInput("", null, List.of());
+        var plannerInput = new com.cexpilot.conversation.PlanningContext("", null, List.of());
         var llm = new Script(envelope(plan(snapshotGroup("m1", "binance", null)))) {
             @Override public com.cexpilot.llm.ChatResponse chat(List<com.cexpilot.llm.ChatMessage> messages,
                     List<com.cexpilot.llm.ToolSpec> tools) {

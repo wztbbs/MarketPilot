@@ -1,6 +1,6 @@
 package com.cexpilot.dag;
 
-import com.cexpilot.conversation.QueryFrame;
+import com.cexpilot.conversation.TaskVersion;
 import com.cexpilot.metric.*;
 import com.cexpilot.runtime.RequestContext;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -21,11 +21,11 @@ class ConditionProvenanceResolverTest {
     private final MetricPlanCompiler compiler = new MetricPlanCompiler(new MetricCatalog(LOADER), registry(), catalogProviders());
     private final ConditionProvenanceResolver resolver = new ConditionProvenanceResolver();
 
-    private CompiledPlan resolve(JsonNode plan, String claims, String question, QueryFrame base) {
+    private CompiledPlan resolve(JsonNode plan, String claims, String question, TaskVersion base) {
         return resolver.resolve(compiler, plan, claims == null ? null : json(claims), question, base, CONTEXT, 12);
     }
 
-    private QueryFrame saved(CompiledPlan plan, String turn, long version, String interval) {
+    private TaskVersion saved(CompiledPlan plan, String turn, long version, String interval) {
         var evidence = JSON.createArrayNode();
         if (interval != null) {
             var entry = evidence.addObject().put("node_id", "metric_0").put("ok", true);
@@ -35,8 +35,7 @@ class ConditionProvenanceResolverTest {
             data.putObject("coverage").put("range_complete", true);
             data.putArray("samples").addObject().put("value", 123);
         }
-        return QueryFrame.fromJson(QueryFrame.fromCompiledPlan("frame-old", version, "conv", turn, "原问题",
-                NOW, ZONE, plan, evidence, "SUCCEEDED").toJson());
+        return TaskVersion.fromJson(com.cexpilot.conversation.ContextFixtures.executed("frame-old", "conv", version, turn, "原问题", NOW, ZONE, plan, evidence, "SUCCEEDED").toJson());
     }
 
     @Test void 编译字段不能仅因模型填写就记为用户明确要求() {
@@ -49,25 +48,25 @@ class ConditionProvenanceResolverTest {
 
     @Test void 用户原文依据及来源标识随任务版本持久化() {
         var plan = resolve(scalarPlan(), "{\"m1\":{\"interval\":\"1小时\",\"exchange\":\"币安\"}}", "查币安，用1小时粒度", null);
-        var target = saved(plan, "turn-1", 3, null).targets().get(0);
+        var target = saved(plan, "turn-1", 3, null).queryDefinition().targets().get(0);
         assertEquals(ConditionOrigin.EXPLICIT, target.intervalOrigin());
         var source = target.conditionSources().get("interval");
         assertEquals("1小时", source.userText());
         assertEquals("turn-1", source.sourceTurnId());
-        assertEquals("frame-old", source.sourceFrameId());
+        assertEquals("frame-old", source.sourceTaskId());
         assertEquals(3L, source.sourceVersion());
     }
 
     @Test void 自动粒度与执行范围独立保存且模型抄回5m后仍自动选择() {
         var p = scalarPlan(); ((ObjectNode)p.at("/metrics/0")).remove("interval");
         var base = saved(resolve(p, null, "昨天成交额", null), "turn-1", 2, "5m");
-        var old = base.targets().get(0);
+        var old = base.queryDefinition().targets().get(0);
         assertNull(old.interval());
-        assertEquals("5m", old.executionMetadata().path("candle_interval").asText());
-        assertEquals(old.executionMetadata().get("requested_range"), old.executionMetadata().get("effective_range"));
-        assertTrue(old.executionMetadata().has("actual_range"));
-        assertTrue(old.executionMetadata().has("coverage"));
-        assertFalse(old.executionMetadata().has("samples"));
+        assertEquals("5m", base.executionSummary().metadata(old.physicalId()).path("candle_interval").asText());
+        assertEquals(base.executionSummary().metadata(old.physicalId()).get("requested_range"), base.executionSummary().metadata(old.physicalId()).get("effective_range"));
+        assertTrue(base.executionSummary().metadata(old.physicalId()).has("actual_range"));
+        assertTrue(base.executionSummary().metadata(old.physicalId()).has("coverage"));
+        assertFalse(base.executionSummary().metadata(old.physicalId()).has("samples"));
 
         var next = scalarPlan(); ((ObjectNode)next.at("/metrics/0")).put("interval", "5m");
         var targetPlan = resolve(next, null, "那最低价呢", base);
@@ -75,7 +74,7 @@ class ConditionProvenanceResolverTest {
         assertNull(target.interval());
         assertFalse(targetPlan.dagPlan().nodes().get(0).args().has("interval"));
         assertFalse(targetPlan.logicalPlanJson().at("/metrics/0").has("interval"));
-        assertNull(target.executionMetadata()); // 新执行还没发生，不能复制旧实际范围。
+        assertFalse(JSON.valueToTree(target).has("executionMetadata")); // 查询要求不携带执行结果。
         assertEquals(ConditionOrigin.INHERITED, target.intervalOrigin());
         var source = target.conditionSources().get("interval");
         assertEquals(ConditionOrigin.DEFAULT, source.requirementOrigin());
@@ -146,7 +145,7 @@ class ConditionProvenanceResolverTest {
         assertNull(result.targets().get(0).conditionSources().get("interval").userText());
     }
 
-    private CompiledPlan update(JsonNode plan, String actions, QueryFrame base) {
+    private CompiledPlan update(JsonNode plan, String actions, TaskVersion base) {
         return resolver.resolve(compiler, plan, null, json(actions), "本轮参数操作", base, CONTEXT, 12, ignored -> {});
     }
 
@@ -273,10 +272,9 @@ class ConditionProvenanceResolverTest {
 
     @Test void 旧快照可读取但旧EXPLICIT不能追认用户原文() {
         var p = resolve(scalarPlan(), null, "查数据", null);
-        var legacyTarget = p.targets().get(0).withMetadata(java.util.Map.of(), null);
-        var legacy = new QueryFrame("legacy", "conv", 1, "old-turn", "旧问题", NOW.toString(), ZONE.getId(),
-                List.of(legacyTarget), null, null, null);
-        var result = resolve(scalarPlan(), null, "再查", QueryFrame.fromJson(legacy.toJson()));
+        var legacyTarget = p.targets().get(0).withSources(java.util.Map.of());
+        var legacy = com.cexpilot.conversation.ContextFixtures.version("legacy", "conv", 1, "old-turn", "旧问题", NOW.toString(), ZONE.getId(), List.of(legacyTarget), null, "SUCCEEDED");
+        var result = resolve(scalarPlan(), null, "再查", TaskVersion.fromJson(legacy.toJson()));
         var source = result.targets().get(0).conditionSources().get("interval");
         assertEquals(ConditionOrigin.INHERITED, source.origin());
         assertEquals(ConditionOrigin.PLANNED, source.requirementOrigin());
@@ -286,21 +284,19 @@ class ConditionProvenanceResolverTest {
         var originalPlan = scalarPlan(); ((ObjectNode)originalPlan.at("/metrics/0")).remove("interval");
         var original = saved(resolve(originalPlan, null, "昨天成交额", null), "original-turn", 2, "5m");
         var current = saved(resolve(scalarPlan(), "{\"m1\":{\"interval\":\"1小时\"}}", "1小时", null), "current-turn", 9, null);
-        current = new QueryFrame("frame-current", "conv", 9, current.sourceTurnId(), "当前任务", NOW.toString(), ZONE.getId(),
-                current.targets(), null, null, null);
-        var originalState = com.cexpilot.conversation.TaskState.legacy(original, 2, "最初查询");
-        var candidate = com.cexpilot.conversation.TaskSnapshot.candidate(originalState, "task_original");
+        current = com.cexpilot.conversation.ContextFixtures.version("frame-current", "conv", 9, current.turnId(), "当前任务", NOW.toString(), ZONE.getId(), current.queryDefinition().targets(), null, "SUCCEEDED");
+        var originalState = original;
+        var candidate = new com.cexpilot.conversation.TaskVersionCandidate("task_original" + "_v" + originalState.version(), originalState);
         var copied = scalarPlan(); ((ObjectNode)copied.at("/metrics/0")).put("interval", "5m");
         var env = (ObjectNode)json(envelope(copied));
-        env.put("task_action", "RESUME").put("task_ref", candidate.taskRef()).put("state_ref", candidate.stateRef());
+        env.put("task_action", "RESUME").put("candidate_ref", candidate.candidateRef());
         var config = new com.cexpilot.config.DagConfig(); config.setPlannerMaxRetries(0);
-        var outcome = planner(new Script(env.toString()), registry(), config).plan("回到最初查询", "", "test", e -> {},
-                current, CONTEXT, null, List.of(candidate), com.cexpilot.conversation.TaskState.legacy(current, 9, "当前任务"));
+        var outcome = planner(new Script(env.toString()), registry(), config).plan("回到最初查询", "", "test", e -> {}, current, CONTEXT, null, List.of(candidate));
         var target = outcome.plan().orElseThrow().targets().get(0);
         assertNull(target.interval());
         var source = target.conditionSources().get("interval");
         assertEquals("original-turn", source.sourceTurnId());
-        assertEquals("frame-old", source.sourceFrameId());
+        assertEquals("frame-old", source.sourceTaskId());
         assertEquals(2L, source.sourceVersion());
         assertEquals(ConditionOrigin.DEFAULT, source.requirementOrigin());
     }
@@ -312,9 +308,8 @@ class ConditionProvenanceResolverTest {
         var evidence = JSON.createArrayNode();
         evidence.addObject().put("node_id", "metric_0").put("ok", true).putObject("data").put("candle_interval", "5m");
         evidence.addObject().put("node_id", "metric_1").put("ok", false).putObject("data").put("candle_interval", "伪值");
-        var frame = QueryFrame.fromJson(QueryFrame.fromCompiledPlan("failed-frame", 3, "conv", "failed-turn", "两所价格",
-                NOW, ZONE, plan, evidence, "FAILED").toJson());
-        assertEquals("5m", frame.targets().get(0).executionMetadata().path("candle_interval").asText());
-        assertNull(frame.targets().get(1).executionMetadata());
+        var frame = TaskVersion.fromJson(com.cexpilot.conversation.ContextFixtures.executed("failed-frame", "conv", 3, "failed-turn", "两所价格", NOW, ZONE, plan, evidence, "FAILED").toJson());
+        assertEquals("5m", frame.executionSummary().metadata("metric_0").path("candle_interval").asText());
+        assertNull(frame.executionSummary().metadata("metric_1"));
     }
 }

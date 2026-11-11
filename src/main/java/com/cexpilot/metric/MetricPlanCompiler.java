@@ -100,7 +100,7 @@ public final class MetricPlanCompiler {
     /**
      * 每个展开的指标节点的有效查询条件及来源：Planner 填写的 → PLANNED（尚无用户原文依据）；
      * 代码自动补的（自动粒度、默认 settle、include_unclosed 默认、默认 depth、目录推导 unit/provider）→ DEFAULT。
-     * EXPLICIT/INHERITED 由规划上下文对账产生，实际范围/粒度在 QueryFrame 提交时回填。
+     * EXPLICIT/INHERITED 由规划上下文对账产生，实际范围/粒度在 QueryDefinition 提交时回填。
      */
     private EffectiveTarget effectiveTarget(ResolvedMetric rm) {
         MetricRequest request = rm.request();
@@ -147,7 +147,7 @@ public final class MetricPlanCompiler {
         if (includeUnclosedOrigin != null) sources.put("include_unclosed", ConditionSource.of(includeUnclosedOrigin));
         if (count != null) sources.put("count", ConditionSource.of(ConditionOrigin.PLANNED));
         if (depthOrigin != null) sources.put("depth", ConditionSource.of(depthOrigin));
-        return target.withMetadata(sources, null);
+        return target.withSources(sources);
     }
 
     private void validateStructure(LogicalPlan logicalPlan, int maxNodes) {

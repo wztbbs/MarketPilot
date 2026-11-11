@@ -81,61 +81,61 @@ public class DagRuntime {
         this.evidenceStore = evidenceStore;
     }
 
-    public ExecutionResult execute(String question, String conversationContext, String traceId, TraceSink sink) {
-        return execute(question, conversationContext, traceId, sink, null, null);
+    public ExecutionResult execute(String question, String answerHistory, String traceId, TraceSink sink) {
+        return execute(question, answerHistory, traceId, sink, null, null);
     }
 
     /**
      * @param answerDelta 非 null 时 answer 阶段走流式调用，逐段回调答案增量（用于 SSE 推送）；
      *                    trace 落库与聚合逻辑不变。
      */
-    public ExecutionResult execute(String question, String conversationContext, String traceId,
+    public ExecutionResult execute(String question, String answerHistory, String traceId,
                                    TraceSink sink, Consumer<String> answerDelta) {
-        return execute(question, conversationContext, traceId, sink, answerDelta, null);
+        return execute(question, answerHistory, traceId, sink, answerDelta, null);
     }
 
     /**
      * @param requestContext 请求时间上下文（用户时区 + 固定 requestTime），随 ToolContext
      *                       传给每个工具节点和 Answer；缺省值在规划前统一补齐
      */
-    public ExecutionResult execute(String question, String conversationContext, String traceId,
+    public ExecutionResult execute(String question, String answerHistory, String traceId,
                                    TraceSink sink, Consumer<String> answerDelta,
                                    RequestContext requestContext) {
-        return execute(question, conversationContext, traceId, sink, answerDelta, requestContext, null);
+        return execute(question, answerHistory, traceId, sink, answerDelta, requestContext, null);
     }
 
     /**
      * @param progress 非 null 时在阶段边界回调进度文案（SSE 推给前端展示"执行到哪一步"）
      */
-    public ExecutionResult execute(String question, String conversationContext, String traceId,
+    public ExecutionResult execute(String question, String answerHistory, String traceId,
                                    TraceSink sink, Consumer<String> answerDelta,
                                    RequestContext requestContext, Consumer<String> progress) {
-        return execute(question, conversationContext, traceId, sink, answerDelta, requestContext, progress, null);
+        return execute(question, answerHistory, traceId, sink, answerDelta, requestContext, progress, null);
     }
 
     /**
      * @param compiledPlanSink 非 null 时，计划通过校验后、执行前回调完整编译产物（含 LogicalPlan 与
-     *                         有效条件），供轮次/QueryFrame 持久化；不影响任何执行行为
+     *                         有效条件），供轮次/QueryDefinition 持久化；不影响任何执行行为
      */
-    public ExecutionResult execute(String question, String conversationContext, String traceId,
+    public ExecutionResult execute(String question, String answerHistory, String traceId,
                                    TraceSink sink, Consumer<String> answerDelta,
                                    RequestContext requestContext, Consumer<String> progress,
                                    Consumer<com.cexpilot.metric.CompiledPlan> compiledPlanSink) {
-        return execute(question, conversationContext, traceId, sink, answerDelta, requestContext, progress,
+        return execute(question, answerHistory, traceId, sink, answerDelta, requestContext, progress,
                 compiledPlanSink, null);
     }
 
     /**
      * @param plannerInput 结构化 Planner 输入（阶段一 c）：contextText 只注入 planner prompt，
-     *                     activeFrame 供继承对账；Answer 侧仍用 conversationContext 纯文本，不受影响。
-     *                     null 时 planner 沿用 conversationContext（旧行为）
+     *                     activeDefinition 供继承对账；Answer 侧仍用 answerHistory 纯文本，不受影响。
+     *                     null 时 planner 沿用 answerHistory（旧行为）
      */
-    public ExecutionResult execute(String question, String conversationContext, String traceId,
+    public ExecutionResult execute(String question, String answerHistory, String traceId,
                                    TraceSink sink, Consumer<String> answerDelta,
                                    RequestContext requestContext, Consumer<String> progress,
                                    Consumer<com.cexpilot.metric.CompiledPlan> compiledPlanSink,
-                                   com.cexpilot.conversation.PlannerInput plannerInput) {
-        return execute(question, conversationContext, traceId, sink, answerDelta, requestContext, progress,
+                                   com.cexpilot.conversation.PlanningContext plannerInput) {
+        return execute(question, answerHistory, traceId, sink, answerDelta, requestContext, progress,
                 compiledPlanSink, plannerInput, null);
     }
 
@@ -144,25 +144,24 @@ public class DagRuntime {
      *                        执行后、Answer 前把本轮取数结果保存为 FACT（Answer 失败也已保存，F13），
      *                        并启用 pinned_result → REUSE_FACT 绑定
      */
-    public ExecutionResult execute(String question, String conversationContext, String traceId,
+    public ExecutionResult execute(String question, String answerHistory, String traceId,
                                    TraceSink sink, Consumer<String> answerDelta,
                                    RequestContext requestContext, Consumer<String> progress,
                                    Consumer<com.cexpilot.metric.CompiledPlan> compiledPlanSink,
-                                   com.cexpilot.conversation.PlannerInput plannerInput,
+                                   com.cexpilot.conversation.PlanningContext plannerInput,
                                    com.cexpilot.evidence.EvidenceSession evidenceSession) {
         try(var scope=com.cexpilot.runtime.QueryBudget.open(queryConfig)) {
-            return executeBudgeted(question,conversationContext,traceId,sink,answerDelta,requestContext,progress,compiledPlanSink,plannerInput,evidenceSession);
+            return executeBudgeted(question,answerHistory,traceId,sink,answerDelta,requestContext,progress,compiledPlanSink,plannerInput,evidenceSession);
         }
     }
-    private ExecutionResult executeBudgeted(String question,String conversationContext,String traceId,TraceSink sink,Consumer<String> answerDelta,
+    private ExecutionResult executeBudgeted(String question,String answerHistory,String traceId,TraceSink sink,Consumer<String> answerDelta,
             RequestContext requestContext,Consumer<String> progress,Consumer<com.cexpilot.metric.CompiledPlan> compiledPlanSink,
-            com.cexpilot.conversation.PlannerInput plannerInput,com.cexpilot.evidence.EvidenceSession evidenceSession) {
+            com.cexpilot.conversation.PlanningContext plannerInput,com.cexpilot.evidence.EvidenceSession evidenceSession) {
         RequestContext effectiveContext = resolveRequestContext(requestContext);
         ObjectNode timeContext = answerTimeContext(effectiveContext,
                 requestContext != null && requestContext.userZone() != null);
         String plannerContext = plannerInput != null && plannerInput.contextText() != null
-                ? plannerInput.contextText() : conversationContext;
-        com.cexpilot.conversation.QueryFrame activeFrame = plannerInput != null ? plannerInput.activeFrame() : null;
+                ? plannerInput.contextText() : answerHistory;
         com.cexpilot.evidence.EvidenceBindingContext evidenceContext =
                 plannerInput != null && evidenceSession != null && evidenceStore != null
                         ? new com.cexpilot.evidence.EvidenceBindingContext(
@@ -174,9 +173,8 @@ public class DagRuntime {
             String plannerQuestion = plannerInput != null && plannerInput.resolvedQuestion() != null
                     ? plannerInput.resolvedQuestion() : question;
             outcome = planner.plan(plannerQuestion, plannerContext, traceId, sink,
-                    activeFrame, effectiveContext, evidenceContext,
-                    plannerInput == null ? List.of() : plannerInput.tasks(),
-                    plannerInput == null ? null : plannerInput.currentTask(),
+                    plannerInput == null ? null : plannerInput.currentVersion(), effectiveContext, evidenceContext,
+                    plannerInput == null ? List.of() : plannerInput.candidates(),
                     plannerInput != null && plannerInput.clarificationSubmission(),
                     plannerInput != null && plannerInput.resolvedQuestion() != null ? question : null);
         } catch (DagPlanner.PlanningFailure pf) {
@@ -204,7 +202,7 @@ public class DagRuntime {
                     plannerLlmCalls, 0, 0, 0, 0, List.of()).withTaskScope(outcome.inDomain() ? outcome.taskScope() : null).withLlmUsages(usages);
         }
 
-        // 澄清：不执行、不落 frame；编排层把轮次标 NEEDS_CLARIFICATION 并把澄清问题写入 pendingClarification
+        // 澄清：不执行、不落 definition；编排层把轮次标 NEEDS_CLARIFICATION 并把澄清问题写入 pendingClarification
         if (outcome.needsClarification()) {
             String answer = outcome.reply() == null || outcome.reply().isBlank()
                     ? "这个问题我需要再确认一下，请补充说明。" : outcome.reply();
@@ -344,7 +342,7 @@ public class DagRuntime {
             if(clarify!=null)answerText=clarify;
             else {
                 String userContent=question+"\n\n<FACTS>\n"+evidence+"\n</FACTS>\n<QUERY_STATUS>\n"+queryStatus+"\n</QUERY_STATUS>";
-                var systemPrompt=prompts.render(ANSWER_PROMPT_NAME,Map.of("time_context",timeContext.toString(),"conversation_context",conversationContext==null?"":conversationContext));
+                var systemPrompt=prompts.render(ANSWER_PROMPT_NAME,Map.of("time_context",timeContext.toString(),"conversation_context",answerHistory==null?"":answerHistory));
                 var messages=List.of(ChatMessage.system(systemPrompt),ChatMessage.user(userContent));
                 try {
                     budget.beforeModel(false);answerAttempted=true;

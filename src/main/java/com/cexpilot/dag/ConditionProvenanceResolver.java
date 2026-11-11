@@ -1,6 +1,6 @@
 package com.cexpilot.dag;
 
-import com.cexpilot.conversation.QueryFrame;
+import com.cexpilot.conversation.TaskVersion;
 import com.cexpilot.metric.*;
 import com.cexpilot.runtime.RequestContext;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -20,12 +20,12 @@ final class ConditionProvenanceResolver {
     private record Claims(Map<String, Map<String, String>> valid, Map<String, Set<String>> unverified) {}
 
     CompiledPlan resolve(MetricPlanCompiler compiler, JsonNode planJson, JsonNode explicit,
-                         String question, QueryFrame base, RequestContext context, int maxNodes) {
+                         String question, TaskVersion base, RequestContext context, int maxNodes) {
         return resolve(compiler, planJson, explicit, null, question, base, context, maxNodes, ignored -> {});
     }
 
     CompiledPlan resolve(MetricPlanCompiler compiler, JsonNode planJson, JsonNode explicit, JsonNode updates,
-                         String question, QueryFrame base, RequestContext context, int maxNodes,
+                         String question, TaskVersion base, RequestContext context, int maxNodes,
                          Consumer<Warning> warnings) {
         JsonNode copy = planJson.deepCopy();
         List<String> errors = new ArrayList<>();
@@ -43,7 +43,7 @@ final class ConditionProvenanceResolver {
         }));
         var claims = readClaims(initial, explicit, question, compiler, warnings);
         List<EffectiveTarget> matches = InheritanceValidator.matchTargets(
-                base == null ? List.of() : base.targets(), initial.targets());
+                base == null || base.queryDefinition() == null ? List.of() : base.queryDefinition().targets(), initial.targets());
         Map<String, Map<String, JsonNode>> edits = new LinkedHashMap<>();
         for (int i = 0; i < initial.targets().size(); i++) {
             EffectiveTarget target = initial.targets().get(i), previous = matches.get(i);
@@ -54,7 +54,7 @@ final class ConditionProvenanceResolver {
                 JsonNode current = value(target, field);
                 boolean userSpecified = actions.getOrDefault(target.groupId(), Map.of()).containsKey(field)
                         || claims.valid().getOrDefault(target.groupId(), Map.of()).containsKey(field);
-                JsonNode replacement = userSpecified ? current : inheritedValue(copy, target, previous, question, field);
+                JsonNode replacement = userSpecified ? current : inheritedValue(copy, target, previous, question, field, base.executionSummary() == null ? null : base.executionSummary().metadata(previous.physicalId()));
                 if (!userSpecified && !replacement.equals(current)
                         && claims.unverified().getOrDefault(target.groupId(), Set.of()).contains(field)) {
                     errors.add("explicit_conditions." + target.groupId() + "." + field
@@ -98,21 +98,21 @@ final class ConditionProvenanceResolver {
                     if (!fieldAbsent(copy, target.groupId(), field)) sources.put(field, ConditionSource.of(ConditionOrigin.PLANNED));
                 } else if (previous != null && (Objects.equals(value(previous, field), value(target, field))
                         || ("time".equals(field) && context != null
-                            && validator.sameTimeRequirement(base, previous, target, context)))) {
-                    sources.put(field, source(previous, field).inherited(base.sourceTurnId(), base.frameId(), base.version()));
+                            && validator.sameTimeRequirement(base.queryDefinition(), previous, target, context)))) {
+                    sources.put(field, source(previous, field).inherited(base.turnId(), base.taskId(), base.version()));
                 }
             }
-            targets.add(target.withMetadata(sources, null));
+            targets.add(target.withSources(sources));
         }
         return new CompiledPlan(plan.logicalPlan(), plan.logicalPlanJson(), plan.dagPlan(), plan.branches(), targets);
     }
 
     private static JsonNode inheritedValue(JsonNode copy, EffectiveTarget target, EffectiveTarget previous,
-                                            String question, String field) {
+                                            String question, String field, JsonNode executionMetadata) {
         JsonNode current = value(target, field), old = value(previous, field);
         if ("interval".equals(field) && previous.interval() == null && target.interval() != null
-                && previous.executionMetadata() != null
-                && target.interval().equals(previous.executionMetadata().path("candle_interval").asText())) {
+                && executionMetadata != null
+                && target.interval().equals(executionMetadata.path("candle_interval").asText())) {
             // 仅是阻止自动改写的保守线索，不能据此升级为 EXPLICIT。
             if (question == null || !question.matches("(?is).*(粒度|颗粒|间隔|保持|固定|自动|每\\s*\\d|\\b\\d+\\s*[mhd]\\b|\\d+\\s*分钟).*"))
                 return MAPPER.nullNode();

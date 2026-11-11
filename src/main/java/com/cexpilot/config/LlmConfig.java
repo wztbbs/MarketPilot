@@ -14,7 +14,9 @@ public class LlmConfig {
     private ModelConfig normal = new ModelConfig();
     private ModelConfig flagship = new ModelConfig();
     private double temperature = 0;
+    /** 单请求最大规划步数（旧工具循环路径使用）。 */
     private int maxSteps = 4;
+    /** 单请求最大工具调用次数（旧工具循环路径使用）。 */
     private int maxToolCalls = 8;
     /** 采样种子（OpenAI 兼容 seed 参数），null = 不下发。用于排查/eval 时复现输出。 */
     private Long seed;
@@ -70,10 +72,15 @@ public class LlmConfig {
     /** 一套 LLM 接入的连接与计费配置。 */
     public static class ModelConfig {
 
+        /** OpenAI 兼容接口地址。 */
         private String baseUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+        /** API Key，由环境变量注入。 */
         private String apiKey = "";
+        /** 模型名。 */
         private String model = "";
+        /** 输入单价（元/千 token），用于费用估算。 */
         private double priceInputPer1k = 0;
+        /** 输出单价（元/千 token），用于费用估算。 */
         private double priceOutputPer1k = 0;
         /** null = 不下发该参数；Qwen3 混合模型默认开思考，低延迟场景应显式设为 false。 */
         private Boolean enableThinking;

@@ -17,6 +17,7 @@ public class LlmClientConfig {
     public static final String NORMAL_LLM_CLIENT = "normalLlmClient";
     public static final String FLAGSHIP_LLM_CLIENT = "flagshipLlmClient";
 
+    /** 普通模型客户端：路由、规划首发与回答都使用；@Primary 保证按类型注入时默认选中。 */
     @Bean(NORMAL_LLM_CLIENT)
     @Primary
     public LlmClient normalLlmClient(LlmConfig config) {
@@ -24,6 +25,7 @@ public class LlmClientConfig {
                 config.getNormal().isPooling());
     }
 
+    /** 旗舰模型客户端：仅 planner 校验失败后的修复重试使用。 */
     @Bean(FLAGSHIP_LLM_CLIENT)
     public LlmClient flagshipLlmClient(LlmConfig config) {
         return new OpenAiCompatibleClient(config.getFlagship(), config.getTemperature(), config.getSeed(),

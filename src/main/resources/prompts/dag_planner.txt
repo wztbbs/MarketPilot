@@ -123,7 +123,6 @@
   - reset 表示用户明确解除旧固定要求，恢复自动/默认；计划必须省略对应参数。例如“改回自动粒度”时省略 interval，输出 "condition_updates":{"m1":{"interval":"reset"}}。恢复默认盘口深度同理：省略 depth，输出 depth="reset"。默认值由程序补全，不复制上轮固定值，也不自己把默认数值填回计划。
   - 用户未提上述参数时，不输出对应操作，沿用已有固定要求；只是执行层上次自动选了某粒度时，仍保持自动，不把实际执行粒度抄成固定参数。新任务的默认值、行业惯例及从历史继承的值不算 set。snapshot 不接受 interval/include_unclosed，只有目录声明了 depth 的盘口指标才使用 depth；现货不使用 settle。不适用的参数不输出操作。
   - task_action：NEW / CONTINUE / RESUME。首个问题或用户明确换话题用 NEW，不继承旧任务条件；延续当前任务、回答澄清或重试失败任务用 CONTINUE；回到旧任务用 RESUME。只修改币种、交易所、指标等条件的普通追问仍是 CONTINUE，不因修改条件就新建任务。
-  - new_frame：仅兼容旧协议；优先输出 task_action。旧 new_frame=true 等价 NEW，否则等价 CONTINUE。
   - task_action 只选择任务，CONTINUE 不表示澄清或请求用户确认。
   - needs_clarification + clarify：指代不明、多个候选无法唯一确定、或缺少必要条件且上下文不能补齐时，必须 needs_clarification=true、plan=null、reply=null，clarify 输出非空字段列表。禁止只输出空计划而省略澄清决策。不得猜测币种、从示例借值或默认选择第一组候选。
   - 每个 clarify 元素只收一个条件：必填 key（唯一字母数字下划线）、label（简短中文）、reason、message；可选 placeholder、hint、options、value。前端每项统一为自由文本框，不输出 type、min、max、minSelections、maxSelections 等控件协议。
@@ -132,7 +131,7 @@
   - reason="missing" 表示用户未提供该条件；reason="invalid" 表示已提供但格式、范围或业务要求不合法；reason="confirm" 表示含糊、有歧义或需要用户选择确认。每项都写 message，直接向用户说明要补充什么；invalid/confirm 必须指出具体问题、歧义或约束，不得只说“请补充信息/请确认”。已有值时在 value 回显原值，不编造默认值。
   - 【已填写的澄清条件】是用户原值，不代表有效。按原值判断是否可用；无效/含糊时可以再次问同一个 key，用 reason=invalid/confirm 和 message 解释为何需要修改或确认。明确有效的值不再问；比特币可归一化为BTC，不把中文名本身当成无效。用户本轮明确修改优先。
   - 表单提交会以“补充本轮查询条件”及标签、值的形式成为下一轮用户消息；结合【未完成任务接续】保留原比较目标和已有条件，不用表单回复覆盖原问题。已补齐且有效的项不再重复询问；需纠正或确认时说明原因并回显原值。
-  - task_ref + state_ref：【近期任务索引】按独立任务及版本列出候选。RESUME 的 task_ref 必须是索引提供的 task_ref；明确“最开始那个问题/第几轮/那一次”时同时选择对应 state_ref，不能用任务最新状态替代原轮次。原任务先澄清后才完成时，“原来的查询”优先选择它最早有有效条件的版本；明确“第一轮”则选第一轮本身，不编造当时尚未确定的条件。回到某任务继续而未指定旧版本时，可省略 state_ref，选择该任务最新版本。索引中找不到或无法唯一确定时必须澄清，不编造引用。
+  - candidate_ref：【近期任务索引】每个候选对应一个确定任务版本。RESUME 必须选择其中一个 candidate_ref；明确“最开始那个问题/第几轮/那一次”时选择对应版本，不能用最新版本代替。最初曾澄清时，“原来的查询”可选择最早有有效条件的版本；明确“第一轮”则选第一轮。回到某任务继续且未指定版本时，选择该任务最新候选。无法唯一确定时澄清，不编造引用。NEW/CONTINUE 不填写 candidate_ref。
   - 【当前任务】中的原问题、有效条件及【未完成任务接续】共同组成待完成需求。用户说“币安/10期/再试一次”时保留原任务及已补齐条件，不用最后一句短回复覆盖原问题；计划仍返回完整 metrics/calculations。
   - 回访时沿用所选状态的原时区与历史范围，参考索引的请求时间。固定历史区间用 absolute_range 表达，避免相对词重新指向本次请求。最新类需求仍按本次请求重新取数。任务状态和 FACT 引用是两件事，不因恢复任务而自动绑定旧行情。
 
@@ -158,8 +157,8 @@
 示例：【可引用历史事实】中有 ref=fact_1（币安 BTC 永续 price.last 快照），本轮追问「比刚才涨了百分之多少？」（pinned 旧快照作 baseline，本轮新取数作 current）：
 {"in_domain":true,"plan":{"metrics":[{"id":"m1","metric":"price.last","exchanges":["binance"],"instrument":{"market_type":"perpetual","base":"BTC","quote":"USDT"},"query_shape":"snapshot","reference_mode":"pinned_result","evidence_ref":"fact_1"},{"id":"m2","metric":"price.last","exchanges":["binance"],"instrument":{"market_type":"perpetual","base":"BTC","quote":"USDT"},"query_shape":"snapshot"}],"calculations":[{"id":"c1","operator":"relative_change","input":{"current":"{{m2.binance.value}}","baseline":"{{m1.binance.value}}"}}]},"reply":null,"needs_clarification":false,"clarify":[]}
 
-示例：近期任务索引里有「task_ref=task_1、state_ref=task_1_v1，原问题『昨天币安 BTC 永续的成交额，按上海时区』」，当前活动任务是别的 ETH 查询，本轮说「回到最开始那个问题，换成 OKX」（回访 task_1_v1，只换交易所，其余条件沿用该版本快照）：
-{"in_domain":true,"task_action":"RESUME","task_ref":"task_1","state_ref":"task_1_v1","plan":{"metrics":[{"id":"m1","metric":"trade.turnover","exchanges":["okx"],"instrument":{"market_type":"perpetual","base":"BTC","quote":"USDT"},"query_shape":"range_statistic","time":{"type":"calendar_period","unit":"day","offset":-1,"segment":"full","extent":"full_period"}}],"calculations":[]},"reply":null,"needs_clarification":false,"clarify":[]}
+示例：近期任务索引里有「candidate_ref=candidate_1，原问题『昨天币安 BTC 永续的成交额，按上海时区』」，当前活动任务是别的 ETH 查询，本轮说「回到最开始那个问题，换成 OKX」（回访 candidate_1，只换交易所，其余条件沿用该版本快照）：
+{"in_domain":true,"task_action":"RESUME","candidate_ref":"candidate_1","plan":{"metrics":[{"id":"m1","metric":"trade.turnover","exchanges":["okx"],"instrument":{"market_type":"perpetual","base":"BTC","quote":"USDT"},"query_shape":"range_statistic","time":{"type":"calendar_period","unit":"day","offset":-1,"segment":"full","extent":"full_period"}}],"calculations":[]},"reply":null,"needs_clarification":false,"clarify":[]}
 
 示例：【可引用历史事实】中有 ref=fact_1（币安 BTC 的旧价快照），本轮要求“用刚才的价格减去现在的价格”（旧值在 left，新值在 right）：
 {"in_domain":true,"plan":{"metrics":[{"id":"m1","metric":"price.last","exchanges":["binance"],"instrument":{"market_type":"perpetual","base":"BTC","quote":"USDT"},"query_shape":"snapshot","reference_mode":"pinned_result","evidence_ref":"fact_1"},{"id":"m2","metric":"price.last","exchanges":["binance"],"instrument":{"market_type":"perpetual","base":"BTC","quote":"USDT"},"query_shape":"snapshot"}],"calculations":[{"id":"c1","operator":"difference","input":{"left":"{{m1.binance.value}}","right":"{{m2.binance.value}}"}}]},"reply":null,"needs_clarification":false,"clarify":[]}

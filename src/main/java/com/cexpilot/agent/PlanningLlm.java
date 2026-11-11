@@ -21,6 +21,18 @@ public class PlanningLlm {
     public PlanningLlm(@Qualifier(LlmClientConfig.NORMAL_LLM_CLIENT) LlmClient client,LlmConfig config,PromptStore prompts) {
         this.client=client; this.config=config; this.prompts=prompts;
     }
+    /**
+     * 发起一次规划类 LLM 调用并完整落 trace（请求消息、模型参数、响应、耗时与 token）。
+     * router/query_continue/agent_* 阶段会先占用共享预算；失败调用也计入 usage 并记录错误事件。
+     *
+     * @param stage    调用阶段标识（router/query_continue/agent_plan/agent_answer 等）
+     * @param prompt   提示词模板名，用于记录版本指纹
+     * @param messages 完整对话消息
+     * @param traceId  本轮 Trace 标识
+     * @param sink     Trace 写入器
+     * @param usages   累计用量列表，本次调用的 usage 会追加进去
+     * @return 模型响应；调用异常原样上抛（已先落错误事件）
+     */
     public ChatResponse call(String stage,String prompt,List<ChatMessage> messages,String traceId,TraceSink sink,List<LlmUsage> usages) {
         var budget=("router".equals(stage)||"query_continue".equals(stage)||stage.startsWith("agent_"))?com.cexpilot.runtime.QueryBudget.current():null;
         if(budget!=null)budget.beforeModel("query_continue".equals(stage)||"agent_plan".equals(stage));

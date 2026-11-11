@@ -42,10 +42,16 @@ public final class NodeTraceCollector {
     private NodeTraceCollector() {
     }
 
+    /**
+     * 绑定当前线程的收集会话；无线程绑定时 record 为空操作（单测、离线路径不受影响）。
+     *
+     * @param session 本节点的收集会话
+     */
     public static void bind(Session session) {
         CURRENT.set(session);
     }
 
+    /** 解除当前线程的绑定，节点结束后必须调用。 */
     public static void clear() {
         CURRENT.remove();
     }

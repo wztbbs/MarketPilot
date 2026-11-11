@@ -72,6 +72,10 @@ public class DagExecutor {
     public record ExecutionOutcome(DagContext context, int layers, int httpRequests) {
     }
 
+    /** 节点执行身份：会话归属 + Agent/访客标识 + 工具白名单；null 表示旧路径（无身份透传，HTTP 工具会被拒绝）。 */
+    public record NodeIdentity(String conversationId, String agentId, String visitorId, java.util.Set<String> allowedTools) {
+    }
+
     /** 单节点的工作线程产出：结果 + 解析后的入参（供主线程落 trace）。 */
     private record NodeOutcome(ToolResult result, String resolvedArgsJson, long durationMs) {
     }
@@ -112,11 +116,21 @@ public class DagExecutor {
     }
     public ExecutionOutcome executeIncremental(DagPlan plan,String traceId,TraceSink sink,RequestContext requestContext,
             ExecutionBindings bindings,Map<String,ToolResult> seeds,com.cexpilot.runtime.QueryBudget budget) {
-        return executeInternal(plan,traceId,sink,requestContext,bindings,seeds,(node,result)->{},budget);
+        return executeInternal(plan,traceId,sink,requestContext,bindings,seeds,(node,result)->{},budget,null);
+    }
+    /** 带节点执行身份的预算执行入口：声明式 Agent 经 PlanEngine 使用，HTTP 工具据此完成鉴权与身份透传。 */
+    public ExecutionOutcome executeIdentified(DagPlan plan,String traceId,TraceSink sink,RequestContext requestContext,
+            com.cexpilot.runtime.QueryBudget budget,NodeIdentity identity) {
+        return executeInternal(plan,traceId,sink,requestContext,null,Map.of(),(node,result)->{},budget,identity);
     }
     private ExecutionOutcome executeInternal(DagPlan plan,String traceId,TraceSink sink,RequestContext requestContext,
             ExecutionBindings bindings,Map<String,ToolResult> seeds,java.util.function.BiConsumer<PlanNode,ToolResult> completed,
             com.cexpilot.runtime.QueryBudget budget) {
+        return executeInternal(plan,traceId,sink,requestContext,bindings,seeds,completed,budget,null);
+    }
+    private ExecutionOutcome executeInternal(DagPlan plan,String traceId,TraceSink sink,RequestContext requestContext,
+            ExecutionBindings bindings,Map<String,ToolResult> seeds,java.util.function.BiConsumer<PlanNode,ToolResult> completed,
+            com.cexpilot.runtime.QueryBudget budget,NodeIdentity identity) {
         DagContext ctx = new DagContext();
         seeds.forEach(ctx::put);
         // 本轮共享的 HTTP 请求计数器：工作线程进入节点执行前绑定到线程，
@@ -140,7 +154,7 @@ public class DagExecutor {
                 sessions.add(session);
                 futures.add(pool.submit(() -> {
                     if(budget!=null)budget.checkTime();
-                    return runNode(node,ctx,traceId,requestContext,bindings,httpRequests,session);
+                    return runNode(node,ctx,traceId,requestContext,bindings,httpRequests,session,identity);
                 }));
             }
             try {
@@ -161,11 +175,11 @@ public class DagExecutor {
                                 RequestContext requestContext,
                                 com.cexpilot.metric.ExecutionBindings bindings,
                                 java.util.concurrent.atomic.AtomicInteger httpRequests,
-                                NodeTraceCollector.Session session) {
+                                NodeTraceCollector.Session session, NodeIdentity identity) {
         com.cexpilot.market.HttpRequestCounter.bind(httpRequests);
         NodeTraceCollector.bind(session);
         try {
-            return doRunNode(node, ctx, traceId, requestContext, bindings);
+            return doRunNode(node, ctx, traceId, requestContext, bindings, identity);
         } finally {
             com.cexpilot.market.HttpRequestCounter.clear();
             NodeTraceCollector.clear();
@@ -174,7 +188,7 @@ public class DagExecutor {
 
     private NodeOutcome doRunNode(PlanNode node, DagContext ctx, String traceId,
                                   RequestContext requestContext,
-                                  com.cexpilot.metric.ExecutionBindings bindings) {
+                                  com.cexpilot.metric.ExecutionBindings bindings, NodeIdentity identity) {
         long start = System.currentTimeMillis();
         for (String dep : node.dependsOn()) {
             ToolResult depResult = ctx.get(dep);
@@ -206,9 +220,14 @@ public class DagExecutor {
                 }
             }
             resolvedArgs = registry.prepareArguments(node.tool(), ReferenceResolver.resolve(node.args(), ctx));
-            result = tool.execute(resolvedArgs, new ToolContext(traceId, null,
-                    requestContext == null ? null : requestContext.userZone(),
-                    requestContext == null ? null : requestContext.requestTime()));
+            result = tool.execute(resolvedArgs, identity == null
+                    ? new ToolContext(traceId, null,
+                            requestContext == null ? null : requestContext.userZone(),
+                            requestContext == null ? null : requestContext.requestTime())
+                    : new ToolContext(traceId, identity.conversationId(),
+                            requestContext == null ? null : requestContext.userZone(),
+                            requestContext == null ? null : requestContext.requestTime(),
+                            identity.agentId(), identity.visitorId(), identity.allowedTools()));
             if (tool instanceof CalculationTool) {
                 result = com.cexpilot.metric.MetricCalculationContext.attach(node, ctx, result);
             }

@@ -22,7 +22,7 @@ public final class EvidenceAssembler {
     }
 
     /**
-     * 分配 ref；prioritizedFactIds 中的事实（活动 frame 的焦点，R12）排最前——
+     * 分配 ref；prioritizedFactIds 中的事实（任务版本执行摘要的焦点，R12）排最前——
      * "这组/刚才那个结果"应优先绑定焦点事实，短别名每轮可变但本轮映射明确。
      * 排序稳定：同组内保持调用方顺序（如 fetchedAt 倒序）。
      */

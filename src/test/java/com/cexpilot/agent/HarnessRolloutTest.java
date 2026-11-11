@@ -81,8 +81,9 @@ class HarnessRolloutTest {
         var dispatcher = new AgentDispatcher(new IntentRouter(new PlanningLlm(llm, new LlmConfig(), prompts), prompts),
                 registry, new AgentContextAssembler(), new QueryExecutionConfig(), policy, new AnalysisMonitorHandoff());
         var events = new ArrayList<TraceEvent>();
-        var result = dispatcher.execute("外部问题", "", "trace", events::add, null, REQUEST, null, null,
-                null, new EvidenceSession("c", "turn"), JSON.createObjectNode(), r -> {}, "visitor");
+        var result = dispatcher.execute(AgentExecutionRequest.builder("外部问题","trace",events::add)
+                .requestContext(REQUEST).session(new EvidenceSession("c", "turn"))
+                .routingState(JSON.createObjectNode()).visitor("visitor").build());
         assertEquals("clarify", result.agentType()); assertEquals(2, result.routerLlmCalls()); assertNull(ran.get());
         assertFalse(calls.get(0).get(0).content().contains("external:"));
         var rollout = events.stream().filter(e -> "HARNESS_ROLLOUT".equals(e.eventType())).findFirst().orElseThrow();
@@ -97,8 +98,8 @@ class HarnessRolloutTest {
         var ran = new AtomicReference<Boolean>();
         var dispatcher = new AgentDispatcher(router, new AgentRegistry(List.of(agent("external", HarnessRolloutConfig.Group.HTTP_AGENT, ran))),
                 new AgentContextAssembler(), new QueryExecutionConfig(), policy, new AnalysisMonitorHandoff());
-        assertThrows(ExecutionFailure.class, () -> dispatcher.execute("问题", "", "t", e -> {}, null, REQUEST,
-                null, null, null, null, null, r -> {}, "visitor"));
+        assertThrows(ExecutionFailure.class, () -> dispatcher.execute(AgentExecutionRequest.builder("问题","t",e->{})
+                .requestContext(REQUEST).visitor("visitor").build()));
         assertNull(ran.get()); assertNull(QueryBudget.current());
     }
 
@@ -109,10 +110,10 @@ class HarnessRolloutTest {
         var global = new QueryExecutionConfig(); var ran = new AtomicReference<Boolean>();
         var dispatcher = new AgentDispatcher(router, new AgentRegistry(List.of(agent("query", HarnessRolloutConfig.Group.CORE, ran))),
                 new AgentContextAssembler(), global, policy, new AnalysisMonitorHandoff());
-        dispatcher.execute("问题", "", "t1", e -> {}, null, REQUEST, null, null, null, null, null, r -> {}, "visitor");
+        dispatcher.execute(AgentExecutionRequest.builder("问题","t1",e->{}).requestContext(REQUEST).visitor("visitor").build());
         assertEquals(false, ran.get()); assertTrue(global.isAdaptiveEnabled()); assertNull(QueryBudget.current());
         policy.setAdaptiveQueryPercent(100);
-        dispatcher.execute("问题", "", "t2", e -> {}, null, REQUEST, null, null, null, null, null, r -> {}, "visitor");
+        dispatcher.execute(AgentExecutionRequest.builder("问题","t2",e->{}).requestContext(REQUEST).visitor("visitor").build());
         assertEquals(true, ran.get()); assertNull(QueryBudget.current());
     }
 }

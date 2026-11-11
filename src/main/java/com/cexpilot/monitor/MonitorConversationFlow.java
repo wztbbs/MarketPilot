@@ -166,7 +166,12 @@ public class MonitorConversationFlow {
         if(visitor==null || original==null || !original.isObject()) return original;
         var result=((ObjectNode)original).deepCopy(); var previous=result.at("/monitor_context/confirmation");
         if(previous.hasNonNull("ruleId")) {
-            try { ((ObjectNode)result.path("monitor_context")).set("confirmation",card(visitor,previous.path("ruleId").asText(),previous.path("version").asInt())); }
+            String ruleId=previous.path("ruleId").asText();
+            int version=previous.path("version").asInt();
+            try {
+                ObjectNode refreshed=card(visitor,ruleId,version);
+                ((ObjectNode)result.path("monitor_context")).set("confirmation",refreshed);
+            }
             catch(ResponseStatusException stale) { ((ObjectNode)result.path("monitor_context")).remove("confirmation"); }
         }
         return result;

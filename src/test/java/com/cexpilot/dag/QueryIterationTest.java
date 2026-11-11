@@ -35,7 +35,7 @@ class QueryIterationTest {
     }
     private ExecutionResult run(DagRuntime runtime,String question,List<String> deltas) {
         return runtime.execute(question,"历史", "t",events::add,deltas==null?null:deltas::add,REQUEST,null,committed::set,
-                new PlannerInput("",null),new EvidenceSession("c","turn"));
+                new PlanningContext("",null),new EvidenceSession("c","turn"));
     }
     private static String adaptive(JsonNode plan){return ((ObjectNode)json(envelope(plan))).put("execution_mode","adaptive").toString();}
     private static String finish(boolean complete){return "{\"action\":\"finish\",\"reason\":\"按现有证据收束\",\"completion\":\""+(complete?"complete":"partial")+"\"}";}
@@ -80,8 +80,8 @@ class QueryIterationTest {
         assertEquals(7,facts.rows.size());assertEquals(3,result.plannerLlmCalls());assertEquals(1,result.answerLlmCalls());
         assertEquals(List.of("完整回答"),deltas);assertEquals("MODEL_FINISH",result.agentPayload().at("/execution/stop_reason").asText());
         assertEquals(2,committed.get().logicalPlan().metrics().size());assertEquals(4,committed.get().logicalPlan().calculations().size());
-        var frame=QueryFrame.fromCompiledPlan("c","turn","完整原任务",REQUEST.requestTime(),REQUEST.userZone(),committed.get(),result.evidence());
-        assertEquals(3,frame.targets().size());assertEquals(7,frame.focus().path("evidence_nodes").size());
+        var frame=com.cexpilot.conversation.ContextFixtures.executed("test-task", "c", 1, "turn", "完整原任务", REQUEST.requestTime(), REQUEST.userZone(), committed.get(), result.evidence(), "SUCCEEDED");
+        assertEquals(3,frame.queryDefinition().targets().size());assertEquals(7,frame.executionSummary().focus().path("evidence_nodes").size());
         assertTrue(events.stream().anyMatch(e->e.eventType().equals("QUERY_ITERATION") && e.outputJson().contains("cumulative_plan")));
     }
     @Test void addsMissingCalculationUsingExistingFactsWithoutRefetching() {
@@ -176,8 +176,9 @@ class QueryIterationTest {
         var dispatcher=new com.cexpilot.agent.AgentDispatcher(router,
                 new com.cexpilot.agent.AgentRegistry(List.of(new com.cexpilot.agent.MarketAnalysisAgent(query))),
                 new com.cexpilot.agent.AgentContextAssembler(),policy);
-        var result=dispatcher.execute("成交额","","t",events::add,null,REQUEST,null,committed::set,new PlannerInput("",null),
-                new EvidenceSession("c","turn"),JSON.createObjectNode(),selected->{});
+        var result=dispatcher.execute(com.cexpilot.agent.AgentExecutionRequest.builder("成交额","t",events::add)
+                .requestContext(REQUEST).compiledPlanSink(committed::set).planningContext(new PlanningContext("",null))
+                .session(new EvidenceSession("c","turn")).routingState(JSON.createObjectNode()).selectedAgent(selected->{}).build());
         assertEquals(4,script.calls.size());assertEquals(1,result.routerLlmCalls());assertEquals(2,result.plannerLlmCalls());
         assertEquals(1,result.answerLlmCalls());assertEquals("MODEL_BUDGET",result.agentPayload().at("/execution/stop_reason").asText());
         assertEquals(4,result.agentPayload().at("/execution/budget/model_calls").asInt());
@@ -212,11 +213,11 @@ class QueryIterationTest {
         var result=run(runtime(script,provider((q,c)->metricResult(q,c,24,true))),"先查币安，再查OKX并计算差值",null);
         conversations.finishTaskTurn("c",turn,"先查币安，再查OKX并计算差值","SUCCEEDED",result.answer(),"t",committed.get(),result.evidence(),
                 result.taskScope(),REQUEST.requestTime(),REQUEST.userZone(),null);
-        var next=new ConversationContextService(repo,new EvidenceStore(facts)).buildPlannerInput("c");
-        assertEquals("先查币安，再查OKX并计算差值",next.currentTask().originQuestion());
-        assertEquals(2,next.currentTask().logicalPlan().path("metrics").size());
-        assertEquals(1,next.currentTask().logicalPlan().path("calculations").size());
-        assertEquals(2,next.activeFrame().targets().size());assertEquals(3,next.activeFrame().focus().path("evidence_nodes").size());
+        var next=new ConversationContextService(repo,new EvidenceStore(facts)).buildPlanningContext("c");
+        assertEquals("先查币安，再查OKX并计算差值",next.currentVersion().originQuestion());
+        assertEquals(2,next.currentVersion().queryDefinition().logicalPlan().path("metrics").size());
+        assertEquals(1,next.currentVersion().queryDefinition().logicalPlan().path("calculations").size());
+        assertEquals(2,next.activeDefinition().targets().size());assertEquals(3,next.currentVersion().executionSummary().focus().path("evidence_nodes").size());
     }
     @Test void continuationCannotIntroduceAnUnboundHistoricalReference() {
         var pinned=metric("m2","trade.turnover","range_statistic","okx").put("reference_mode","pinned_result").put("evidence_ref","fact_99");
@@ -256,7 +257,7 @@ class QueryIterationTest {
         var script=new Script(adaptive(plan(snapshot)),add(delta),finish(true),"原报价与84000差1000");
         var query=runtime(script,namedProvider("ticker",TickerMetric::valueOf,(q,c)->{throw new AssertionError("历史结果不得重新取数");}));
         var result=query.execute("84000比刚才原报价高多少","","t",events::add,null,REQUEST,null,committed::set,
-                new PlannerInput(EvidenceAssembler.render(candidates),null,candidates),new EvidenceSession("c","turn"));
+                new PlanningContext(EvidenceAssembler.render(candidates),null,candidates),new EvidenceSession("c","turn"));
         assertEquals(0,result.metricFetchCount());assertEquals(1,result.reusedFactCount());assertEquals(1,result.calculationCount());
         assertEquals("1000",entry(result,"difference").at("/data/value").asText());
         assertEquals("old-turn",entry(result,"metric_0").path("source_turn_id").asText());
@@ -295,7 +296,7 @@ class QueryIterationTest {
         var query=runtime(script,namedProvider("ticker",TickerMetric::valueOf,(q,c)->new MetricResult.Point(
                 new MetricResult.SnapshotMetadata(c.requestTime(),c.userZone()),new BigDecimal("84000"))));
         var result=query.execute("现在比原报价高多少","","t",events::add,null,REQUEST,null,committed::set,
-                new PlannerInput(EvidenceAssembler.render(candidates),null,candidates),new EvidenceSession("c","second-turn"));
+                new PlanningContext(EvidenceAssembler.render(candidates),null,candidates),new EvidenceSession("c","second-turn"));
         assertEquals(1,result.metricFetchCount());assertEquals(1,result.reusedFactCount());assertEquals(1,result.calculationCount());
         assertEquals("1000",entry(result,"difference").at("/data/value").asText());
         assertTrue(entry(result,"metric_0").path("reused").asBoolean());assertFalse(entry(result,"metric_1").path("reused").asBoolean());

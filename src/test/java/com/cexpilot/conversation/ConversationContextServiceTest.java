@@ -31,7 +31,7 @@ class ConversationContextServiceTest {
     private final ConversationRepository repository = mock(ConversationRepository.class);
     private final ConversationContextService service = new ConversationContextService(repository);
 
-    private static QueryFrame sampleFrame() throws Exception {
+    private static TaskVersion sampleFrame() throws Exception {
         JsonNode instrument = MAPPER.readTree(
                 "{\"market_type\":\"perpetual\",\"base\":\"BTC\",\"quote\":\"USDT\",\"settle\":\"USDT\"}");
         JsonNode time = MAPPER.readTree("{\"type\":\"calendar_period\",\"unit\":\"day\",\"offset\":-1}");
@@ -39,33 +39,35 @@ class ConversationContextServiceTest {
                 "price.high", "range_statistic", instrument, ConditionOrigin.DEFAULT,
                 time, "5m", ConditionOrigin.DEFAULT, false, ConditionOrigin.DEFAULT,
                 null, null, null, "USDT", "kline", "v1");
-        return new QueryFrame("frame-1", "conv-1", 1, "turn-1", "昨天币安 BTC 最高价",
-                Instant.parse("2026-10-12T01:26:53Z").toString(), "Asia/Shanghai",
-                List.of(target), null, null, null);
+        return com.cexpilot.conversation.ContextFixtures.version("frame-1", "conv-1", 1, "turn-1", "昨天币安 BTC 最高价", Instant.parse("2026-10-12T01:26:53Z").toString(), "Asia/Shanghai", List.of(target), null, "SUCCEEDED");
     }
 
     private static QueryRecord record(String q, String a) {
         return new QueryRecord(1, q, a, "trace-1", LocalDateTime.of(2026, 10, 11, 9, 26));
     }
 
+    /** 以该 frame 为最新条件构造当前任务（status=SUCCEEDED）。 */
+    private static TaskVersion active(TaskVersion frame) {
+        return frame;
+    }
+
     @Test void compactContextKeepsFixedRequirementsWithoutFullProvenanceChain() throws Exception {
-        var frame=sampleFrame();var target=frame.targets().get(0);
+        var frame=sampleFrame();var target=frame.queryDefinition().targets().get(0);
         var source=com.cexpilot.metric.ConditionSource.of(ConditionOrigin.EXPLICIT)
                 .identify("PRIVATE_SOURCE_TURN","PRIVATE_SOURCE_FRAME",3);
-        target=target.withMetadata(java.util.Map.of("interval",source),null);
-        var compactFrame=new QueryFrame(frame.frameId(),frame.conversationId(),frame.version(),frame.sourceTurnId(),
-                frame.originalQuestion(),frame.requestTime(),frame.timezone(),List.of(target),null,null,null);
-        when(repository.findActiveFrameJson("conv-1")).thenReturn(compactFrame.toJson());
+        target=target.withSources(java.util.Map.of("interval",source));
+        var compactFrame=com.cexpilot.conversation.ContextFixtures.version(frame.taskId(), frame.conversationId(), frame.version(), frame.turnId(), frame.originQuestion(), frame.requestTime(), frame.timezone(), List.of(target), null, "SUCCEEDED");
+        when(repository.findActiveTaskVersion("conv-1")).thenReturn(active(compactFrame));
         when(repository.recentQueries("conv-1",5)).thenReturn(List.of());
-        var input=service.buildPlannerInput("conv-1");
+        var input=service.buildPlanningContext("conv-1");
         assertTrue(input.contextText().contains("\"interval\":true"));
         assertFalse(input.contextText().contains("PRIVATE_SOURCE_TURN"));
         assertFalse(input.contextText().contains("requirementVersion"));
-        assertEquals("PRIVATE_SOURCE_TURN",input.activeFrame().targets().get(0).conditionSources().get("interval").sourceTurnId());
+        assertEquals("PRIVATE_SOURCE_TURN",input.activeDefinition().targets().get(0).conditionSources().get("interval").sourceTurnId());
     }
 
     @Test void rewriteContextKeepsTasksButOmitsDuplicateDialogueAndFactCatalogue() {
-        var input=new PlannerInput("当前条件\n【可引用历史事实】秘密事实目录\n【近期任务索引】历史任务\n【近期问答】重复答案",null);
+        var input=new PlanningContext("当前条件\n【可引用历史事实】秘密事实目录\n【近期任务索引】历史任务\n【近期问答】重复答案",null);
         String text=ConversationContextService.rewriteContext(input);
         assertTrue(text.contains("当前条件"));assertTrue(text.contains("历史任务"));
         assertFalse(text.contains("秘密事实目录"));assertFalse(text.contains("重复答案"));
@@ -73,12 +75,13 @@ class ConversationContextServiceTest {
 
     @Test
     void 有frame时分层注入结构化条件与文本历史() throws Exception {
-        when(repository.findActiveFrameJson("conv-1")).thenReturn(sampleFrame().toJson());
+        var frame = sampleFrame();
+        when(repository.findActiveTaskVersion("conv-1")).thenReturn(active(frame));
         when(repository.recentQueries("conv-1", 5)).thenReturn(List.of(record("昨天币安 BTC 最高价", "最高 83955 USDT")));
 
-        PlannerInput input = service.buildPlannerInput("conv-1");
+        PlanningContext input = service.buildPlanningContext("conv-1");
 
-        assertNotNull(input.activeFrame());
+        assertNotNull(input.activeDefinition());
         String ctx = input.contextText();
         assertTrue(ctx.contains("【活动查询状态】"), ctx);
         assertTrue(ctx.contains("price.high"), ctx);
@@ -91,85 +94,25 @@ class ConversationContextServiceTest {
     }
 
     @Test
-    void frame损坏时降级为纯文本历史不报错() {
-        when(repository.findActiveFrameJson("conv-1")).thenReturn("{损坏的json");
-        when(repository.recentQueries("conv-1", 5)).thenReturn(List.of(record("BTC 多少钱", "83500")));
-
-        PlannerInput input = service.buildPlannerInput("conv-1");
-
-        assertNull(input.activeFrame());
-        assertFalse(input.contextText().contains("【活动查询状态】"));
-        assertTrue(input.contextText().contains("【近期问答】"), input.contextText());
-    }
-
-    @Test
-    void 无frame无历史时上下文为空且activeFrame为null() {
-        when(repository.findActiveFrameJson("conv-1")).thenReturn(null);
+    void 无frame无历史时上下文为空且activeDefinition为null() {
         when(repository.recentQueries("conv-1", 5)).thenReturn(List.of());
 
-        PlannerInput input = service.buildPlannerInput("conv-1");
+        PlanningContext input = service.buildPlanningContext("conv-1");
 
-        assertNull(input.activeFrame());
+        assertNull(input.activeDefinition());
         assertTrue(input.contextText().isBlank());
     }
 
     @Test
-    void 首轮澄清任务独立渲染不要求frame存在() {
-        // R1：新会话没有活动 frame，澄清任务也要进 prompt，且带原问题
-        when(repository.findActiveFrameJson("conv-1")).thenReturn(null);
+    void 任务索引进prompt且PlanningContext携带快照() throws Exception {
+        // R3 一期：可回访任务渲染成索引，结构化快照随 PlanningContext 供 RESUME 定位
         when(repository.recentQueries("conv-1", 5)).thenReturn(List.of());
-        when(repository.findPendingTaskJson("conv-1")).thenReturn(
-                "{\"question\":\"BTC 和 ETH 谁的费率均值更高？\",\"clarify\":\"您想看哪家交易所？\",\"turnId\":\"t1\"}");
+        when(repository.recentTaskLatestVersions("conv-1", 5)).thenReturn(List.of(sampleFrame()));
 
-        PlannerInput input = service.buildPlannerInput("conv-1");
+        PlanningContext input = service.buildPlanningContext("conv-1");
 
-        assertNull(input.activeFrame());
-        String ctx = input.contextText();
-        assertTrue(ctx.contains("【待补条件】"), ctx);
-        assertTrue(ctx.contains("BTC 和 ETH 谁的费率均值更高？"), "原问题必须回传给 Planner");
-        assertTrue(ctx.contains("您想看哪家交易所？"), ctx);
-        assertTrue(ctx.contains("完成原任务"), ctx);
-    }
-
-    @Test
-    void 失败尝试独立渲染供重试接续() {
-        // R2：FAILED 轮次不进文本历史，但"再试一次"需要结构化失败任务
-        when(repository.findActiveFrameJson("conv-1")).thenReturn(null);
-        when(repository.recentQueries("conv-1", 5)).thenReturn(List.of());
-        when(repository.findLastAttemptJson("conv-1")).thenReturn(
-                "{\"turnId\":\"t2\",\"question\":\"ETH 昨日收盘价\",\"status\":\"FAILED\"}");
-
-        PlannerInput input = service.buildPlannerInput("conv-1");
-
-        String ctx = input.contextText();
-        assertTrue(ctx.contains("【最近失败尝试】"), ctx);
-        assertTrue(ctx.contains("ETH 昨日收盘价"), ctx);
-        assertTrue(ctx.contains("以它为基准"), ctx);
-    }
-
-    @Test
-    void 澄清任务损坏时忽略该段不报错() {
-        when(repository.findActiveFrameJson("conv-1")).thenReturn(null);
-        when(repository.recentQueries("conv-1", 5)).thenReturn(List.of());
-        when(repository.findPendingTaskJson("conv-1")).thenReturn("{损坏");
-
-        PlannerInput input = service.buildPlannerInput("conv-1");
-
-        assertFalse(input.contextText().contains("【待补条件】"));
-    }
-
-    @Test
-    void 任务索引进prompt且PlannerInput携带快照() throws Exception {
-        // R3 一期：可回访任务渲染成索引，结构化快照随 PlannerInput 供 RESUME 定位
-        when(repository.findActiveFrameJson("conv-1")).thenReturn(null);
-        when(repository.recentQueries("conv-1", 5)).thenReturn(List.of());
-        when(repository.recentFrames("conv-1", 5)).thenReturn(
-                List.of(new TaskSnapshot(1, "turn-1", "昨天币安 BTC 最高价", sampleFrame())));
-
-        PlannerInput input = service.buildPlannerInput("conv-1");
-
-        assertEquals(1, input.tasks().size());
-        assertEquals("turn-1", input.tasks().get(0).turnId());
+        assertEquals(1, input.candidates().size());
+        assertEquals("turn-1", input.candidates().get(0).taskVersion().turnId());
         String ctx = input.contextText();
         assertTrue(ctx.contains("【近期任务索引】"), ctx);
         assertTrue(ctx.contains("turn-1"), ctx);
@@ -180,32 +123,29 @@ class ConversationContextServiceTest {
     @Test
     void 焦点事实渲染进prompt供指代绑定() throws Exception {
         // R12：focus 里的 factId 要进 prompt——"这组/刚才那个结果"才有绑定锚点
-        QueryFrame base = sampleFrame();
+        TaskVersion base = sampleFrame();
         JsonNode focus = MAPPER.readTree("{\"evidence_nodes\":[{\"node_id\":\"metric_0\",\"type\":\"metric\","
                 + "\"ok\":true,\"fact_id\":\"fact-9\",\"identity\":{\"metric\":\"price.high\"}}]}");
-        QueryFrame frame = new QueryFrame(base.frameId(), base.conversationId(), base.version(),
-                base.sourceTurnId(), base.originalQuestion(), base.requestTime(), base.timezone(),
-                base.targets(), focus, null, null);
-        when(repository.findActiveFrameJson("conv-1")).thenReturn(frame.toJson());
+        TaskVersion frame = com.cexpilot.conversation.ContextFixtures.version(base.taskId(), base.conversationId(), base.version(), base.turnId(), base.originQuestion(), base.requestTime(), base.timezone(), base.queryDefinition().targets(), focus, "SUCCEEDED");
+        when(repository.findActiveTaskVersion("conv-1")).thenReturn(active(frame));
         when(repository.recentQueries("conv-1", 5)).thenReturn(List.of());
 
-        String ctx = service.buildPlannerInput("conv-1").contextText();
+        String ctx = service.buildPlanningContext("conv-1").contextText();
 
         assertTrue(ctx.contains("【当前焦点】"), ctx);
         assertTrue(ctx.contains("evidence_ref=不可用"), ctx);
         assertFalse(ctx.contains("fact-9"), "不能把无可用候选的 UUID 当成模型可引用的 ref");
     }
 
-    private static QueryFrame frameWithFocus(String... ids) throws Exception {
-        QueryFrame base = sampleFrame();
+    private static TaskVersion frameWithFocus(String... ids) throws Exception {
+        TaskVersion base = sampleFrame();
         var focus = MAPPER.createObjectNode();
         var nodes = focus.putArray("evidence_nodes");
         for (int i = 0; i < ids.length; i++) {
             var node = nodes.addObject().put("node_id", "node_" + i).put("fact_id", ids[i]);
             node.putObject("identity").put("metric", "funding.rate_settled");
         }
-        return new QueryFrame(base.frameId(), base.conversationId(), base.version(), base.sourceTurnId(),
-                base.originalQuestion(), base.requestTime(), base.timezone(), base.targets(), focus, null, null);
+        return com.cexpilot.conversation.ContextFixtures.version(base.taskId(), base.conversationId(), base.version(), base.turnId(), base.originQuestion(), base.requestTime(), base.timezone(), base.queryDefinition().targets(), focus, "SUCCEEDED");
     }
 
     private static com.cexpilot.evidence.EvidenceFact fact(String id, String turn, boolean derived) {
@@ -224,8 +164,8 @@ class ConversationContextServiceTest {
         var a = fact("uuid-a", "turn-a", false);
         var b = fact("uuid-b", "turn-b", false);
         when(store.listReusable(eq("conv-1"), any(Instant.class))).thenReturn(List.of(b, a));
-        when(repository.findActiveFrameJson("conv-1")).thenReturn(frameWithFocus("uuid-a", "uuid-b").toJson());
-        var input = new ConversationContextService(repository, store).buildPlannerInput("conv-1");
+        when(repository.findActiveTaskVersion("conv-1")).thenReturn(active(frameWithFocus("uuid-a", "uuid-b")));
+        var input = new ConversationContextService(repository, store).buildPlanningContext("conv-1");
         assertEquals("uuid-b", input.evidence().get(0).fact().factId());
         String ctx = input.contextText();
         assertTrue(ctx.contains("node=node_0，metric=funding.rate_settled，evidence_ref=fact_2，source_turn_id=turn-a"), ctx);
@@ -237,9 +177,8 @@ class ConversationContextServiceTest {
     void 历史任务焦点也使用本轮同一份候选映射() throws Exception {
         var store = mock(com.cexpilot.evidence.EvidenceStore.class);
         when(store.listReusable(eq("conv-1"), any(Instant.class))).thenReturn(List.of(fact("uuid-old", "turn-old", false)));
-        when(repository.recentFrames("conv-1", 5)).thenReturn(List.of(
-                new TaskSnapshot(1, "turn-old", "之前那10期", frameWithFocus("uuid-old"))));
-        String ctx = new ConversationContextService(repository, store).buildPlannerInput("conv-1").contextText();
+        when(repository.recentTaskLatestVersions("conv-1", 5)).thenReturn(List.of(frameWithFocus("uuid-old")));
+        String ctx = new ConversationContextService(repository, store).buildPlanningContext("conv-1").contextText();
         assertTrue(ctx.contains("【该历史任务焦点】"), ctx);
         assertTrue(ctx.contains("evidence_ref=fact_1，source_turn_id=turn-old"), ctx);
     }
@@ -248,8 +187,8 @@ class ConversationContextServiceTest {
     void 派生焦点明确标注不可绑定() throws Exception {
         var store = mock(com.cexpilot.evidence.EvidenceStore.class);
         when(store.listReusable(eq("conv-1"), any(Instant.class))).thenReturn(List.of(fact("uuid-avg", "turn-avg", true)));
-        when(repository.findActiveFrameJson("conv-1")).thenReturn(frameWithFocus("uuid-avg").toJson());
-        String ctx = new ConversationContextService(repository, store).buildPlannerInput("conv-1").contextText();
+        when(repository.findActiveTaskVersion("conv-1")).thenReturn(active(frameWithFocus("uuid-avg")));
+        String ctx = new ConversationContextService(repository, store).buildPlanningContext("conv-1").contextText();
         assertTrue(ctx.contains("evidence_ref=fact_1，source_turn_id=turn-avg（派生结果，不可绑定为原始取数事实）"), ctx);
         assertFalse(ctx.contains("原始事实，可按此 ref 绑定"), ctx);
     }
@@ -263,29 +202,31 @@ class ConversationContextServiceTest {
         var base = sampleFrame();
         var plan = MAPPER.readTree("{\"metrics\":[{\"id\":\"m1\",\"reference_mode\":\"pinned_result\",\"evidence_ref\":\"fact_9\"}],\"calculations\":[]}");
         var compiled = new com.cexpilot.metric.CompiledPlan(new com.cexpilot.metric.LogicalPlan(List.of(), List.of()),
-                plan, new com.cexpilot.dag.DagPlan(List.of()), java.util.Map.of(), base.targets());
+                plan, new com.cexpilot.dag.DagPlan(List.of()), java.util.Map.of(), base.queryDefinition().targets());
         var evidence = MAPPER.createArrayNode();
         evidence.addObject().put("node_id", "metric_0").put("type", "metric").put("ok", true).put("fact_id", "uuid-old");
-        var state = TaskState.complete("stable-task", "conv-1", 1, null,
+        var state = TaskVersion.complete("stable-task", "conv-1", 1, null,
                 new ConversationService.TurnHandle(1, "turn-1", 1), "原样本", "FAILED", "Answer超时",
                 compiled, evidence, Instant.now(), java.time.ZoneId.of("Asia/Shanghai"));
-        when(repository.findActiveTask("conv-1")).thenReturn(state);
+        when(repository.findActiveTaskVersion("conv-1")).thenReturn(state);
         var service = new ConversationContextService(repository, store);
-        String ctx = service.buildPlannerInput("conv-1").contextText();
+        String ctx = service.buildPlanningContext("conv-1").contextText();
         assertTrue(ctx.contains("\"evidence_ref\":\"fact_1\""), ctx);
         assertFalse(ctx.contains("fact_9"), ctx);
-        assertEquals("fact_9", state.logicalPlan().at("/metrics/0/evidence_ref").asText());
+        assertEquals("uuid-old", state.queryDefinition().logicalPlan().at("/metrics/0/evidence_fact_id").asText());
+        assertTrue(state.queryDefinition().logicalPlan().at("/metrics/0/evidence_ref").isMissingNode());
+        assertEquals("fact_9", plan.at("/metrics/0/evidence_ref").asText(), "不能改写编译产物中的当轮引用");
         when(store.listReusable(eq("conv-1"), any(Instant.class))).thenReturn(List.of());
-        assertTrue(service.buildPlannerInput("conv-1").contextText().contains("\"evidence_ref\":\"不可用\""));
+        assertTrue(service.buildPlanningContext("conv-1").contextText().contains("\"evidence_ref\":\"不可用\""));
     }
 
     @Test
     void 答案截断放宽到500且结构化条件不参与截断() throws Exception {
         String longAnswer = "数".repeat(600);
-        when(repository.findActiveFrameJson("conv-1")).thenReturn(sampleFrame().toJson());
+        when(repository.findActiveTaskVersion("conv-1")).thenReturn(active(sampleFrame()));
         when(repository.recentQueries("conv-1", 5)).thenReturn(List.of(record("q", longAnswer)));
 
-        String ctx = service.buildPlannerInput("conv-1").contextText();
+        String ctx = service.buildPlanningContext("conv-1").contextText();
 
         assertFalse(ctx.contains("数".repeat(501)), "答案应被截断到 500 字");
         assertTrue(ctx.contains("数".repeat(500)), "前 500 字应保留");
@@ -296,8 +237,8 @@ class ConversationContextServiceTest {
     void 有可引用历史事实时渲染候选段且不受文本截断影响() throws Exception {
         var store = new com.cexpilot.evidence.EvidenceStore(
                 new com.cexpilot.evidence.InMemoryEvidenceRepository());
-        QueryFrame frame = sampleFrame();
-        EffectiveTarget target = frame.targets().get(0);
+        TaskVersion frame = sampleFrame();
+        EffectiveTarget target = frame.queryDefinition().targets().get(0);
         JsonNode payload = MAPPER.readTree("""
                 {"metric":"price.high","exchange":"binance","query_shape":"range_statistic","unit":"USDT",
                  "requested_range":{"start_inclusive":"2026-10-11 00:00:00","end_exclusive":"2026-10-12 00:00:00",
@@ -307,10 +248,10 @@ class ConversationContextServiceTest {
         store.saveFact("conv-1", "turn-1", "trace-1", target, payload, Instant.now());
         var withEvidence = new ConversationContextService(repository, store);
         String longAnswer = "数".repeat(600);
-        when(repository.findActiveFrameJson("conv-1")).thenReturn(frame.toJson());
+        when(repository.findActiveTaskVersion("conv-1")).thenReturn(active(frame));
         when(repository.recentQueries("conv-1", 5)).thenReturn(List.of(record("q", longAnswer)));
 
-        PlannerInput input = withEvidence.buildPlannerInput("conv-1");
+        PlanningContext input = withEvidence.buildPlanningContext("conv-1");
 
         assertEquals(1, input.evidence().size());
         assertEquals("fact_1", input.evidence().get(0).ref());
@@ -321,6 +262,25 @@ class ConversationContextServiceTest {
         assertFalse(ctx.contains("83955"), "候选索引不含 payload 明细数值");
         assertTrue(ctx.contains("数".repeat(500)), "文本历史仍按原口径截断，事实段优先保留");
         // 其它会话的事实不进本会话候选
-        assertTrue(service.buildPlannerInput("conv-1").evidence().isEmpty(), "无 store 时旧行为：无候选段");
+        assertTrue(service.buildPlanningContext("conv-1").evidence().isEmpty(), "无 store 时旧行为：无候选段");
     }
+    @Test void 未绑定成功的历史输入不能把旧别名绑定到本轮其他事实() throws Exception {
+        var store = mock(com.cexpilot.evidence.EvidenceStore.class);
+        when(store.listReusable(eq("conv-1"), any(Instant.class)))
+                .thenReturn(List.of(fact("different-fact", "different-turn", false)));
+        var logical = MAPPER.readTree("{\"metrics\":[{\"id\":\"m1\",\"reference_mode\":\"pinned_result\",\"evidence_ref\":\"fact_1\"}],\"calculations\":[]}");
+        var compiled = new com.cexpilot.metric.CompiledPlan(null, logical, null, java.util.Map.of(),
+                sampleFrame().queryDefinition().targets());
+        var version = TaskVersion.complete("task", "conv-1", 1, null,
+                new ConversationService.TurnHandle(1, "turn", 1), "原样本", "FAILED", "取数前失败", compiled,
+                null, Instant.now(), java.time.ZoneOffset.UTC);
+        when(repository.findActiveTaskVersion("conv-1")).thenReturn(version);
+        var stored = version.queryDefinition().logicalPlan().at("/metrics/0");
+        assertFalse(stored.has("evidence_ref"));
+        assertTrue(stored.path("evidence_fact_id").isNull());
+        var text = new ConversationContextService(repository, store).buildPlanningContext("conv-1").contextText();
+        assertTrue(text.contains("\"evidence_ref\":\"不可用\""));
+        assertFalse(text.contains("\"evidence_ref\":\"fact_1\""));
+    }
+
 }

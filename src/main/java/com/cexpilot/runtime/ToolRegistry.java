@@ -23,8 +23,15 @@ public class ToolRegistry {
     }
 
     public ToolRegistry(List<AgentTool> toolList,List<ToolDefinition> configured) {this(toolList,configured,new com.cexpilot.config.HttpToolServices());}
-    public ToolRegistry(List<AgentTool> toolList,List<ToolDefinition> configured,com.cexpilot.config.HttpToolServices services) {
-        Map<String, AgentTool> executors = new LinkedHashMap<>();
+    /**
+     * 绑定 YAML 定义与执行器：enabled 的 Java 工具按同名匹配执行器，HTTP 工具现场构造 HttpAgentTool
+     * （不允许覆盖已有 Java 执行器）；缺执行器、缺 YAML 或重复定义都直接启动失败。
+     *
+     * @param toolList   Spring 容器中的 Java 执行器
+     * @param configured YAML 加载的全部定义（含 disabled）
+     * @param services   HTTP 工具的服务地址/凭证配置
+     */
+    public ToolRegistry(List<AgentTool> toolList,List<ToolDefinition> configured,com.cexpilot.config.HttpToolServices services) {        Map<String, AgentTool> executors = new LinkedHashMap<>();
         for (AgentTool tool : toolList) {
             if (executors.putIfAbsent(tool.name(), tool) != null)
                 throw new IllegalStateException("重复工具执行器: " + tool.name());
@@ -49,18 +56,28 @@ public class ToolRegistry {
         }
     }
 
+    /** @return 已启用工具的执行器；未注册或已禁用返回 null */
     public AgentTool get(String name) { return tools.get(name); }
 
+    /**
+     * @param name 工具名
+     * @return 输出 schema 的深拷贝；未注册返回 null
+     */
     public JsonNode outputSchema(String name) {
         ToolDefinition definition = definitions.get(name);
         return definition == null ? null : definition.outputSchema().deepCopy();
     }
 
+    /**
+     * @param name 工具名
+     * @return 暴露给模型的工具规格；未注册返回 null
+     */
     public ToolSpec spec(String name) {
         ToolDefinition definition = definitions.get(name);
         return definition == null ? null : definition.spec();
     }
 
+    /** @return 全部已启用工具的规格列表（供注入提示词/工具清单） */
     public List<ToolSpec> specs() { return definitions.values().stream().map(ToolDefinition::spec).toList(); }
 
     /** 引用已解析后再次校验，并应用同一份 YAML 的默认值。 */
@@ -72,11 +89,17 @@ public class ToolRegistry {
         return ToolArguments.withDefaults(args, spec.inputSchema());
     }
 
+    /** @return 该工具是否由 HTTP 声明式执行器承载 */
     public boolean isHttp(String name){return get(name) instanceof HttpAgentTool;}
+    /**
+     * @param name 工具名；未注册抛 IllegalArgumentException
+     * @return 工具契约指纹（描述+输入/输出 schema+HTTP 配置）
+     */
     public String contractVersion(String name){
         var definition=definitions.get(name);
         if(definition==null)throw new IllegalArgumentException("未知工具");
         return com.cexpilot.prompt.PromptStore.fingerprint(definition.description()+":"+definition.inputSchema()+":"+definition.outputSchema()+":"+definition.http());
     }
+    /** @return 已启用工具数量 */
     public int size() { return tools.size(); }
 }

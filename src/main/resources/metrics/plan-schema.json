@@ -185,13 +185,6 @@
         "calculations"
       ]
     },
-    "new_frame": {
-      "type": [
-        "boolean",
-        "null"
-      ],
-      "description": "旧协议兼容字段；新代码使用 task_action，显式 task_action 优先"
-    },
     "needs_clarification": {
       "type": "boolean",
       "description": "缺必要条件或指代不明时必须 true，并给出非空 clarify 列表；不是 task_action=CONTINUE。"
@@ -207,14 +200,7 @@
         "RESUME",
         null
       ],
-      "description": "NEW=新任务；CONTINUE=当前任务（含澄清/失败接续）；RESUME=回访任务及版本"
-    },
-    "task_ref": {
-      "type": [
-        "string",
-        "null"
-      ],
-      "description": "RESUME 必填：任务索引提供的 task_ref 别名，不能编造数据库 ID"
+      "description": "NEW 创建任务，CONTINUE 延续当前最新版本，RESUME 选择 candidate_ref 对应版本。省略时有当前任务则 CONTINUE，否则 NEW。"
     },
     "clarify": {
       "type": "array",
@@ -291,13 +277,6 @@
       },
       "uniqueItems": true
     },
-    "state_ref": {
-      "type": [
-        "string",
-        "null"
-      ],
-      "description": "RESUME 可选：任务索引提供的 state_ref；明确回到某轮时必填，不填选择该任务最新候选版本"
-    },
     "condition_updates": {
       "type": [
         "object",
@@ -345,6 +324,13 @@
         "single",
         "adaptive"
       ]
+    },
+    "candidate_ref": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "RESUME 必填：本次任务版本索引中的 candidate_ref，一个别名唯一定位一个任务版本；NEW/CONTINUE 必须省略或为 null"
     }
   },
   "required": [

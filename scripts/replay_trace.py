@@ -162,9 +162,15 @@ def order_router_messages(messages):
 
 
 def refresh_parameter_protocol(body, stage, keep_trace_schema=False):
-    """同步本地参数操作与执行模式协议，保留历史指标/算子 schema。"""
+    """同步本地参数操作、任务候选与执行模式协议，保留历史指标/算子 schema。"""
     response_format = body.get("response_format") or {}
-    if keep_trace_schema or stage != "planner" or response_format.get("type") != "json_schema":
+    if keep_trace_schema or stage != "planner":
+        return False
+    if any(re.search(r"(?:task_ref|state_ref)=", message.get("content", ""))
+           for message in body.get("messages", []) if message.get("role") == "system"):
+        raise ValueError("历史上下文使用旧任务候选协议，无法与当前模板可靠重放；请选择新版 trace，"
+                         "或用旧模板配合 --keep-trace-schema 做历史对照")
+    if response_format.get("type") != "json_schema":
         return False
     schema = response_format.get("json_schema", {}).get("schema", {})
     properties = schema.get("properties", {})
@@ -172,11 +178,14 @@ def refresh_parameter_protocol(body, stage, keep_trace_schema=False):
         return False  # 澄清专项修复等其他信封不改。
     local = read_json(ROOT / "src/main/resources/metrics/plan-schema.json")
     old = copy.deepcopy(properties)
-    properties.pop("explicit_conditions", None)
-    properties.pop("changes", None)
+    obsolete = ("explicit_conditions", "changes", "new_frame", "task_ref", "state_ref")
+    for key in obsolete:
+        properties.pop(key, None)
     properties["condition_updates"] = copy.deepcopy(local["properties"]["condition_updates"])
     properties["execution_mode"] = copy.deepcopy(local["properties"]["execution_mode"])
-    schema["required"] = [key for key in schema.get("required", []) if key not in ("explicit_conditions", "changes")]
+    properties["task_action"] = copy.deepcopy(local["properties"]["task_action"])
+    properties["candidate_ref"] = copy.deepcopy(local["properties"]["candidate_ref"])
+    schema["required"] = [key for key in schema.get("required", []) if key not in obsolete]
     return old != properties
 
 
@@ -266,7 +275,7 @@ def main(argv=None):
         say(f"query: {metadata.get('question')}\nstage={args.stage} attempt={args.attempt} model={body['model']}")
         say(f"模板：{replacement['template_file']}；历史上下文/目录/时间保持原值")
         if schema_updated:
-            say("已同步本地 condition_updates / execution_mode 输出协议；历史指标与算子 schema 保持原值。")
+            say("已同步本地 condition_updates / task_action / candidate_ref / execution_mode 输出协议；历史指标与算子 schema 保持原值。")
         if not replacement["system_changed"]:
             say("提示：system prompt 与旧 trace 相同，本次只是在相同输入下再次采样。")
         if args.dry_run:

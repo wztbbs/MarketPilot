@@ -21,8 +21,7 @@ class DagPlannerTest {
         String original="改回自动粒度（原话标记-CACHE）";
         String resolved="查询币安 BTC/USDT 永续昨天一整天成交额，恢复自动粒度。";
         var llm=new Script("invalid json",envelope(scalarPlan()));
-        var result=planner(llm,registry(),new DagConfig()).plan(resolved,"已有会话摘要","t",e->{},
-                null,null,null,List.of(),null,false,original);
+        var result=planner(llm,registry(),new DagConfig()).plan(resolved, "已有会话摘要", "t", e->{}, null, null, null, List.of(), false, original);
         assertTrue(result.plan().isPresent(),result.lastError());assertEquals(2,llm.calls.size());
         for(var messages:llm.calls) {
             assertFalse(messages.get(0).content().contains(original));
@@ -37,8 +36,7 @@ class DagPlannerTest {
         String resolved="比较币安与 OKX 的 BTC 已结算资金费率均值，期数待补充。";
         var llm=new Script("{\"in_domain\":true,\"needs_clarification\":true,\"plan\":null,\"clarify\":[]}",
                 "{\"clarify\":[{\"key\":\"count\",\"label\":\"期数\",\"reason\":\"missing\",\"message\":\"比较最近多少期？\"}]}");
-        var result=planner(llm,registry(),new DagConfig()).plan(resolved,"已确认币安和OKX","t",e->{},
-                null,null,null,List.of(),null,false,original);
+        var result=planner(llm,registry(),new DagConfig()).plan(resolved, "已确认币安和OKX", "t", e->{}, null, null, null, List.of(), false, original);
         assertTrue(result.needsClarification());assertEquals(2,llm.calls.size());
         var repair=llm.calls.get(1);
         assertFalse(repair.get(0).content().contains(original));
@@ -75,7 +73,7 @@ class DagPlannerTest {
             if (!line.startsWith("{\"in_domain\"") || !line.contains("\"id\"")) continue;
             examples++;
             if (line.contains("\"task_action\":\"RESUME\"")) {
-                // RESUME 示例依赖任务索引，空索引下被 task_ref 校验打回是正确行为；
+                // RESUME 示例依赖任务索引，空索引下被 candidate_ref 校验打回是正确行为；
                 // 其结构与基准切换由专用用例覆盖
                 continue;
             }
@@ -408,7 +406,7 @@ class DagPlannerTest {
     }
 
     /** 与追问计划只差 metric 的活动 frame（其余条件逐项一致），继承对账应只报 [metric]。 */
-    private static com.cexpilot.conversation.QueryFrame priceHighFrame() {
+    private static com.cexpilot.conversation.TaskVersion priceHighFrame() {
         var target = new com.cexpilot.metric.EffectiveTarget("m1", "metric_0", "binance",
                 com.cexpilot.metric.ConditionOrigin.EXPLICIT,
                 "price.high", "range_statistic",
@@ -418,8 +416,7 @@ class DagPlannerTest {
                 "1h", com.cexpilot.metric.ConditionOrigin.EXPLICIT,
                 false, com.cexpilot.metric.ConditionOrigin.DEFAULT,
                 null, null, null, "USDT", "kline", "v1");
-        return new com.cexpilot.conversation.QueryFrame("f1", "c1", 1, "t1", "昨天币安 BTC 最高价",
-                "2026-10-12T00:00:00Z", "Asia/Shanghai", List.of(target), null, null, null);
+        return com.cexpilot.conversation.ContextFixtures.version("f1", "c1", 1, "t1", "昨天币安 BTC 最高价", "2026-10-12T00:00:00Z", "Asia/Shanghai", List.of(target), null, "SUCCEEDED");
     }
 
     private static final com.cexpilot.runtime.RequestContext FOLLOWUP_CTX =
@@ -459,7 +456,7 @@ class DagPlannerTest {
     }
 
     @Test void 已填写的无效值仍可纠错且不按key过滤() {
-        var state = com.cexpilot.conversation.TaskState.legacy(priceHighFrame(), 1, "比较平均费率")
+        var state = priceHighFrame()
                 .withClarificationAnswers(List.of(new com.cexpilot.conversation.ClarificationAnswer("count", "期数", "200"),
                         new com.cexpilot.conversation.ClarificationAnswer("base", "币种", "BTC和ETH")));
         var output = """
@@ -468,8 +465,7 @@ class DagPlannerTest {
                  {"key":"base","label":"币种","type":"select","reason":"confirm","message":"本次比较BTC还是ETH？","options":["BTC","ETH"]}]}
                 """;
         var llm = new Script(output);
-        var result = planner(llm, registry(), new DagConfig()).plan("补充查询条件", "", "t", e -> {},
-                priceHighFrame(), FOLLOWUP_CTX, null, List.of(), state, true);
+        var result = planner(llm, registry(), new DagConfig()).plan("补充查询条件", "", "t", e -> {}, state, FOLLOWUP_CTX, null, List.of(), true, null);
         assertTrue(result.needsClarification());
         assertEquals(2, result.clarificationFields().size(), "同key纠错和确认项均必须保留");
         assertEquals("200", result.clarificationFields().get(0).value().asText());
@@ -479,12 +475,11 @@ class DagPlannerTest {
     }
 
     @Test void 纠错没有原因时专项修复原因后仍展示同一字段() {
-        var state = com.cexpilot.conversation.TaskState.legacy(priceHighFrame(), 1, "比较平均费率")
+        var state = priceHighFrame()
                 .withClarificationAnswers(List.of(new com.cexpilot.conversation.ClarificationAnswer("count", "期数", "200")));
         var llm = new Script("{\"in_domain\":true,\"needs_clarification\":true,\"plan\":null,\"clarify\":[{\"key\":\"count\",\"label\":\"期数\",\"type\":\"number\",\"reason\":\"invalid\"}]}",
                 "{\"clarify\":[{\"key\":\"count\",\"label\":\"期数\",\"type\":\"number\",\"reason\":\"invalid\",\"message\":\"期数最多100，请修改200\"}]}");
-        var result = planner(llm, registry(), new DagConfig()).plan("200", "", "t", e -> {},
-                priceHighFrame(), FOLLOWUP_CTX, null, List.of(), state, true);
+        var result = planner(llm, registry(), new DagConfig()).plan("200", "", "t", e -> {}, state, FOLLOWUP_CTX, null, List.of(), true, null);
         assertEquals("200", result.clarificationFields().get(0).value().asText());
         assertEquals("invalid", result.clarificationFields().get(0).reason());
         assertEquals(2, llm.calls.size());
@@ -551,7 +546,7 @@ class DagPlannerTest {
     }
 
     @Test void 空澄清列表定向修复后返回表单且保留上下文() {
-        String empty = "{\"clarify\":[],\"in_domain\":true,\"needs_clarification\":true,\"plan\":{\"calculations\":[],\"metrics\":[]},\"reply\":null,\"task_action\":\"CONTINUE\",\"task_ref\":null}";
+        String empty = "{\"clarify\":[],\"in_domain\":true,\"needs_clarification\":true,\"plan\":{\"calculations\":[],\"metrics\":[]},\"reply\":null,\"task_action\":\"NEW\",\"candidate_ref\":null}";
         var llm = new Script(empty, "{\"clarify\":[{\"key\":\"base\",\"label\":\"币种\",\"type\":\"text\"}]}");
         var config = new DagConfig(); config.setPlannerResponseFormat("json_schema");
         var events = new ArrayList<TraceEvent>();
@@ -602,7 +597,7 @@ class DagPlannerTest {
         var result = planner(llm, registry(), new DagConfig()).plan("它的均值呢？", "", "t", e -> {}, frame, FOLLOWUP_CTX);
         assertTrue(result.needsClarification());
         assertTrue(result.plan().isEmpty());
-        assertEquals(frame.frameId(), result.taskScope().frame().frameId());
+        assertEquals(frame.taskId(), result.taskScope().base().taskId());
         assertEquals(2, llm.calls.size());
     }
 
@@ -893,7 +888,7 @@ class DagPlannerTest {
         assertEquals("FETCH", out.at("/metrics/0/branches/0/decision").asText(), "未绑定时决策为 FETCH");
         assertEquals(0, out.at("/calculations").size());
         assertEquals(0, out.path("changes").size(), "单轮无修改声明");
-        assertFalse(out.path("new_frame").asBoolean());
+        assertEquals("NEW", out.path("task_action").asText());
     }
 
     @Test void 出域或澄清附带plan时服务端丢弃并落审计事件() {
@@ -941,14 +936,14 @@ class DagPlannerTest {
         assertTrue(llm.calls.get(1).get(3).content().contains("needs_clarification"), "修复消息要教模型补旗");
     }
 
-    @Test void task_ref尾部标点归一后正常命中索引() {
+    @Test void candidate_ref尾部标点归一后正常命中索引() {
         // P042 型：模型输出 "task_2,"（带自然语言逗号），归一后命中 task_2，不再误变澄清
-        var tasks = List.of(com.cexpilot.conversation.TaskSnapshot.candidate(firstTaskState(), "task_2"));
+        var tasks = List.of(new com.cexpilot.conversation.TaskVersionCandidate("candidate_2", firstTaskVersion()));
         var config = new DagConfig(); config.setPlannerMaxRetries(0);
-        var result = planner(new Script(resumeEnvelope("task_2,")), registry(), config)
+        var result = planner(new Script(resumeEnvelope("candidate_2,")), registry(), config)
                 .plan("回到最开始那个问题，换成 OKX", "", "t",
                         e -> {}, activeEthFrame(), FOLLOWUP_CTX, null, tasks);
-        assertTrue(result.plan().isPresent(), "task_ref 尾部标点应归一命中: " + result.lastError());
+        assertTrue(result.plan().isPresent(), "candidate_ref 尾部标点应归一命中: " + result.lastError());
         assertFalse(result.needsClarification());
 
         // 编造引用不受归一影响：不存在的 ref 仍然澄清
@@ -959,10 +954,10 @@ class DagPlannerTest {
         assertTrue(missing.needsClarification());
     }
 
-    // ===== 审查 R3 一期：RESUME 回访（task_ref 命中索引 → 对账基准切到所选快照） =====
+    // ===== 审查 R3 一期：RESUME 回访（candidate_ref 命中索引 → 对账基准切到所选快照） =====
 
     /** 与 priceHighFrame 不同的活动任务（ETH 现价快照），用于验证 RESUME 后基准确实切换。 */
-    private static com.cexpilot.conversation.QueryFrame activeEthFrame() {
+    private static com.cexpilot.conversation.TaskVersion activeEthFrame() {
         var ethTarget = new com.cexpilot.metric.EffectiveTarget("m9", "metric_9", "binance",
                 com.cexpilot.metric.ConditionOrigin.EXPLICIT,
                 "price.last", "snapshot",
@@ -970,18 +965,17 @@ class DagPlannerTest {
                 com.cexpilot.metric.ConditionOrigin.DEFAULT,
                 null, null, null, false, com.cexpilot.metric.ConditionOrigin.DEFAULT,
                 null, null, null, "USDT", "ticker", "v1");
-        return new com.cexpilot.conversation.QueryFrame("f2", "c1", 1, "turn-2", "ETH 现价",
-                "2026-10-12T00:10:00Z", "Asia/Shanghai", List.of(ethTarget), null, null, null);
+        return com.cexpilot.conversation.ContextFixtures.version("f2", "c1", 1, "turn-2", "ETH 现价", "2026-10-12T00:10:00Z", "Asia/Shanghai", List.of(ethTarget), null, "SUCCEEDED");
     }
 
-    private static String resumeEnvelope(String taskRef) {
+    private static String resumeEnvelope(String candidateRef) {
         var env = JSON.createObjectNode();
         env.put("in_domain", true).putNull("reply");
         env.set("plan", plan(metric("m1", "price.high", "range_statistic", "okx")));
         env.putArray("changes").add("exchange");
         env.put("task_action", "RESUME");
-        if (taskRef != null) {
-            env.put("task_ref", taskRef);
+        if (candidateRef != null) {
+            env.put("candidate_ref", candidateRef);
         }
         return env.toString();
     }
@@ -990,8 +984,7 @@ class DagPlannerTest {
         // 回访 turn-1（币安 BTC 最高价），当前活动任务是 ETH 现价；计划 okx/BTC/最高价/昨天/1h
         // 相对 turn-1 快照只换交易所 → 放行。若基准没切换（仍对 ETH 活动任务对账），
         // base/metric/shape 全是漏报，计划会被打回——本用例同时是基准切换的回归防线
-        var tasks = List.of(new com.cexpilot.conversation.TaskSnapshot(1, "turn-1",
-                "昨天币安 BTC 最高价", priceHighFrame()));
+        var tasks = List.of(new com.cexpilot.conversation.TaskVersionCandidate("turn-1", priceHighFrame()));
         var llm = new Script(resumeEnvelope("turn-1"));
 
         var result = planner(llm, registry(), new DagConfig()).plan("回到最开始那个问题，换成 OKX", "", "t",
@@ -1012,23 +1005,23 @@ class DagPlannerTest {
         assertNull(result.taskScope().base());
     }
 
-    private static com.cexpilot.conversation.TaskState firstTaskState() {
-        return com.cexpilot.conversation.TaskState.legacy(priceHighFrame(), 1, "昨天币安BTC最高价");
+    private static com.cexpilot.conversation.TaskVersion firstTaskVersion() {
+        return priceHighFrame();
     }
 
-    private static com.cexpilot.conversation.TaskState secondTaskState() {
+    private static com.cexpilot.conversation.TaskVersion secondTaskVersion() {
         var compiled = new MetricPlanCompiler(new MetricCatalog(LOADER), registry(), catalogProviders())
                 .compileFull(plan(metric("m1", "price.low", "range_statistic", "binance")), 8);
-        return com.cexpilot.conversation.TaskState.complete("f1", "c1", 2, firstTaskState(),
+        return com.cexpilot.conversation.TaskVersion.complete("f1", "c1", 2, firstTaskVersion(),
                 new com.cexpilot.conversation.ConversationService.TurnHandle(2, "turn-2", 2), "最低价呢", "SUCCEEDED",
                 null, compiled, null, FOLLOWUP_CTX.requestTime(), FOLLOWUP_CTX.userZone());
     }
 
     @Test void RESUME可精确选择同任务最初版本而非最新版本() {
-        var first = firstTaskState(); var second = secondTaskState();
-        var tasks = List.of(com.cexpilot.conversation.TaskSnapshot.candidate(first, "task_1"),
-                com.cexpilot.conversation.TaskSnapshot.candidate(second, "task_1"));
-        var env = (ObjectNode) json(resumeEnvelope("task_1")); env.put("state_ref", "task_1_v1");
+        var first = firstTaskVersion(); var second = secondTaskVersion();
+        var tasks = List.of(new com.cexpilot.conversation.TaskVersionCandidate("task_1" + "_v" + first.version(), first),
+                new com.cexpilot.conversation.TaskVersionCandidate("task_1" + "_v" + second.version(), second));
+        var env = (ObjectNode) json(resumeEnvelope("task_1")); env.put("candidate_ref", "task_1_v1");
         var config = new DagConfig(); config.setPlannerMaxRetries(0);
         var result = planner(new Script(env.toString()), registry(), config).plan("回到第一轮换成OKX", "", "t",
                 e -> {}, activeEthFrame(), FOLLOWUP_CTX, null, tasks);
@@ -1037,11 +1030,11 @@ class DagPlannerTest {
         assertEquals(1, result.taskScope().baseVersion());
     }
 
-    @Test void RESUME不指定版本时选择该任务最新版本() {
-        var first = firstTaskState(); var second = secondTaskState();
-        var tasks = List.of(com.cexpilot.conversation.TaskSnapshot.candidate(first, "task_1"),
-                com.cexpilot.conversation.TaskSnapshot.candidate(second, "task_1"));
-        var env = (ObjectNode) json(resumeEnvelope("task_1"));
+    @Test void RESUME明确选择最新版本候选() {
+        var first = firstTaskVersion(); var second = secondTaskVersion();
+        var tasks = List.of(new com.cexpilot.conversation.TaskVersionCandidate("task_1" + "_v" + first.version(), first),
+                new com.cexpilot.conversation.TaskVersionCandidate("task_1" + "_v" + second.version(), second));
+        var env = (ObjectNode) json(resumeEnvelope("task_1_v2"));
         ((ObjectNode)env.at("/plan/metrics/0")).put("metric", "price.low");
         var config = new DagConfig(); config.setPlannerMaxRetries(0);
         var result = planner(new Script(env.toString()), registry(), config).plan("回到之前任务换成OKX", "", "t",
@@ -1051,8 +1044,8 @@ class DagPlannerTest {
     }
 
     @Test void 历史任务与版本必须属于同一个候选任务() {
-        var tasks = List.of(com.cexpilot.conversation.TaskSnapshot.candidate(firstTaskState(), "task_1"),
-                com.cexpilot.conversation.TaskSnapshot.candidate(com.cexpilot.conversation.TaskState.legacy(activeEthFrame(), 3, "ETH现价"), "task_2"));
+        var tasks = List.of(new com.cexpilot.conversation.TaskVersionCandidate("task_1" + "_v" + firstTaskVersion().version(), firstTaskVersion()),
+                new com.cexpilot.conversation.TaskVersionCandidate("task_2" + "_v" + activeEthFrame().version(), activeEthFrame()));
         var env = (ObjectNode) json(resumeEnvelope("task_1")); env.put("state_ref", "task_2_v1");
         var result = planner(new Script(env.toString()), registry(), new DagConfig()).plan("回到之前任务", "", "t",
                 e -> {}, activeEthFrame(), FOLLOWUP_CTX, null, tasks);
@@ -1060,21 +1053,19 @@ class DagPlannerTest {
     }
 
     @Test void 澄清时也返回已选择的任务和来源版本() {
-        var current = firstTaskState();
+        var current = firstTaskVersion();
         String response = "{\"in_domain\":true,\"task_action\":\"CONTINUE\",\"needs_clarification\":true,\"clarify\":\"哪家交易所？\",\"plan\":null}";
-        var result = planner(new Script(response), registry(), new DagConfig()).plan("币安", "", "t", e -> {},
-                current.frame(), FOLLOWUP_CTX, null, List.of(), current);
+        var result = planner(new Script(response), registry(), new DagConfig()).plan("币安", "", "t", e -> {}, current, FOLLOWUP_CTX, null, List.of());
         assertTrue(result.needsClarification()); assertEquals(current, result.taskScope().base());
         assertEquals(com.cexpilot.conversation.TaskScope.Action.CONTINUE, result.taskScope().action());
     }
 
     @Test void 历史选择连续澄清也保留原待补任务() {
-        var pending = com.cexpilot.conversation.TaskState.complete("pending", "c1", 1, null,
+        var pending = com.cexpilot.conversation.TaskVersion.complete("pending", "c1", 1, null,
                 new com.cexpilot.conversation.ConversationService.TurnHandle(1, "turn-1", 1),
                 "回到之前那个BTC问题", "NEEDS_CLARIFICATION", "您指哪一次查询？", null, null,
                 FOLLOWUP_CTX.requestTime(), FOLLOWUP_CTX.userZone());
-        var result = planner(new Script(resumeEnvelope("missing")), registry(), new DagConfig()).plan("最早那个", "", "t",
-                e -> {}, null, FOLLOWUP_CTX, null, List.of(), pending);
+        var result = planner(new Script(resumeEnvelope("missing")), registry(), new DagConfig()).plan("最早那个", "", "t", e -> {}, pending, FOLLOWUP_CTX, null, List.of());
         assertTrue(result.needsClarification());
         assertEquals(pending, result.taskScope().base());
         assertEquals(com.cexpilot.conversation.TaskScope.Action.CONTINUE, result.taskScope().action());
@@ -1088,8 +1079,26 @@ class DagPlannerTest {
         var result = planner(llm, registry(), config).plan("回到最开始那个问题", "", "t",
                 e -> {}, activeEthFrame(), FOLLOWUP_CTX, null, List.of());
 
-        assertTrue(result.plan().isEmpty(), "索引中不存在的 task_ref 不得执行");
+        assertTrue(result.plan().isEmpty(), "索引中不存在的 candidate_ref 不得执行");
         assertTrue(result.needsClarification());
-        assertTrue(result.reply().contains("task_ref"), result.reply());
+        assertTrue(result.reply().contains("candidate_ref"), result.reply());
     }
+    @Test void CONTINUE不能再指定另一个版本候选() {
+        var env = (ObjectNode) json(envelope(scalarPlan()));
+        env.put("task_action", "CONTINUE").put("candidate_ref", "candidate_1");
+        var outcome = planner(new Script(env.toString()), registry(), new DagConfig())
+                .plan("继续", "", "t", e -> {}, firstTaskVersion(), FOLLOWUP_CTX);
+        assertTrue(outcome.needsClarification());
+        assertTrue(outcome.plan().isEmpty());
+    }
+    @Test void RESUME拒绝跨会话版本候选() {
+        var foreign = com.cexpilot.conversation.ContextFixtures.version("foreign", "other", 1, "foreign-turn",
+                "其他会话", FOLLOWUP_CTX.requestTime().toString(), "UTC", List.of(), null, "SUCCEEDED");
+        var outcome = planner(new Script(resumeEnvelope("candidate_foreign")), registry(), new DagConfig())
+                .plan("回到之前", "", "t", e -> {}, firstTaskVersion(), FOLLOWUP_CTX, null,
+                        List.of(new com.cexpilot.conversation.TaskVersionCandidate("candidate_foreign", foreign)));
+        assertTrue(outcome.needsClarification());
+        assertTrue(outcome.plan().isEmpty());
+    }
+
 }

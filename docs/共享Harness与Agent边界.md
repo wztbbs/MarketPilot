@@ -38,7 +38,7 @@ flowchart TD
 
 AgentContextAssembler 负责从旧会话对象投影 query_task、monitor_context、历史和时间。Router 继续只看摘要，不接收完整监控计划和事实；MonitorPlanner 仍按原行为接收业务候选。投影是条件与业务状态，不是已证实的行情证据。
 
-Query 的 PlannerInput、编译产物回调和 resolvedQuestion 放在 MarketAnalysisAgent.QueryInput 中，只交给 market_analysis；Monitor 不接收该对象。QueryFrame、任务版本和 EvidenceBinder 继续由原 Query 链管理；监控候选、确认版本和长期任务状态继续由 Monitor 服务管理。EvidenceStore 与 TraceSink 复用原实现，不复制存储或增加表。Evidence 的保留期不是实时行情的新鲜度承诺。
+Query 的 PlanningContext、编译产物回调和 resolvedQuestion 放在 MarketAnalysisAgent.QueryInput 中，只交给 market_analysis；Monitor 不接收该对象。QueryDefinition、任务版本和 EvidenceBinder 继续由原 Query 链管理；监控候选、确认版本和长期任务状态继续由 Monitor 服务管理。EvidenceStore 与 TraceSink 复用原实现，不复制存储或增加表。Evidence 的保留期不是实时行情的新鲜度承诺。
 
 AgentRunContext 的 visitor 来自已有服务器入口，不能由模型填写；当前仍是既有访客隔离，不宣称已经支持新的租户授权或远程身份透传。
 

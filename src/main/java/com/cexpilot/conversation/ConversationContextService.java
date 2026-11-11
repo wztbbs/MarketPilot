@@ -9,12 +9,12 @@ import java.time.format.DateTimeFormatter;
 import java.util.List;
 
 /**
- * 结构化上下文组装（多轮追问阶段一 c）：加载活动 QueryFrame + 近期文本历史，
- * 分层渲染成 Planner 的 conversation_context；activeFrame 本体同时供程序侧继承对账使用。
+ * 结构化上下文组装（多轮追问阶段一 c）：加载当前任务版本及其查询定义及近期文本历史，
+ * 分层渲染成 Planner 的 conversation_context；activeDefinition 本体同时供程序侧继承对账使用。
  * 阶段二追加【可引用历史事实】段（EvidenceAssembler 候选索引，只含别名与身份摘要，不含明细）。
  *
- * 降级原则：frame 读不到或反序列化失败时退回纯文本历史（旧行为），只记日志，不让老会话报错。
- * Answer 侧仍用 ConversationService.renderContext 的纯文本口径，本类不影响 Answer 输入。
+ * 无当前任务（全新会话或只有 Monitor 轮次）时按无活动状态处理：只剩文本历史与任务索引。
+ * Answer 侧仍用 ConversationService.renderRecentDialogue 的纯文本口径，本类不影响 Answer 输入。
  */
 @Service
 public class ConversationContextService {
@@ -46,24 +46,23 @@ public class ConversationContextService {
         this.evidenceStore = evidenceStore;
     }
 
-    public PlannerInput buildPlannerInput(String conversationId) {
-        TaskState current = repository.findActiveTask(conversationId);
-        QueryFrame frame = current == null ? loadActiveFrame(conversationId) : current.frame();
-        List<TaskSnapshot> tasks = loadTasks(conversationId, current);
-        java.util.Set<String> prioritized = new java.util.LinkedHashSet<>(focusFactIds(frame));
-        for (TaskSnapshot task : tasks) prioritized.addAll(focusFactIds(task.frame()));
+    public PlanningContext buildPlanningContext(String conversationId) {
+        TaskVersion current = repository.findActiveTaskVersion(conversationId);
+        List<TaskVersionCandidate> tasks = loadVersionCandidates(conversationId, current);
+        // 当前任务必含于 tasks（loadVersionCandidates 首先放入 current），其焦点事实随任务快照一并收集
+        java.util.Set<String> prioritized = new java.util.LinkedHashSet<>();
+        for (TaskVersionCandidate task : tasks) {
+            prioritized.addAll(focusFactIds(task.taskVersion().executionSummary()));
+        }
         List<com.cexpilot.evidence.EvidenceAssembler.Entry> evidence = loadEvidence(conversationId, prioritized);
         TextHistory history = renderTextHistory(conversationId);
-        var pendingTask = current == null ? loadStateJson(repository.findPendingTaskJson(conversationId), "pending_task") : null;
-        var lastAttempt = current == null ? loadStateJson(repository.findLastAttemptJson(conversationId), "last_attempt") : null;
-        String context = render(frame, history.text(), evidence, pendingTask, lastAttempt, tasks);
+        String context = render(current, history.text(), evidence, tasks);
         if (current != null) context = renderCurrentTask(current, evidence) + context;
-        return new PlannerInput(context, frame, evidence, history.count(), tasks,
-                current != null ? current : frame == null ? null : TaskState.legacy(frame, 0, frame.originalQuestion()));
+        return new PlanningContext(context, current, evidence, history.count(), tasks);
     }
 
     /** Router receives semantic query context; fact binding stays with the planner. */
-    public static String rewriteContext(PlannerInput input) {
+    public static String rewriteContext(PlanningContext input) {
         String text = input.contextText() == null ? "" : input.contextText();
         int history = text.indexOf("【近期问答】");
         if (history >= 0) text = text.substring(0,history);
@@ -76,56 +75,71 @@ public class ConversationContextService {
     }
 
     /** 索引按任务取近期任务并保留最初任务；每项提供最新、最近版本和最初版本。 */
-    private List<TaskSnapshot> loadTasks(String conversationId, TaskState current) {
-        var byId = new java.util.LinkedHashMap<String, TaskState>();
-        if (current != null) byId.put(current.frameId(), current);
-        for (TaskState state : repository.recentTasks(conversationId, TASK_INDEX_LIMIT)) {
-            byId.putIfAbsent(state.frameId(), state);
+    private List<TaskVersionCandidate> loadVersionCandidates(String conversationId, TaskVersion current) {
+        // 先选择任务：每个 taskId 只保留一份最新版本，作为后续收集该任务历史版本的入口。
+        var byId = new java.util.LinkedHashMap<String, TaskVersion>();
+        // 当前活动任务的最新版本优先放入，保证当前任务一定在候选范围内。
+        if (current != null) byId.put(current.taskId(), current);
+
+        // 取最近讨论过的若干任务，各取最新版本；与当前任务重合时按 taskId 去重。
+        for (TaskVersion state : repository.recentTaskLatestVersions(conversationId, TASK_INDEX_LIMIT)) {
+            byId.putIfAbsent(state.taskId(), state);
         }
-        TaskState first = repository.firstTask(conversationId);
-        if (first != null) byId.putIfAbsent(first.frameId(), first);
-        if (byId.isEmpty()) {
-            // 旧数据过渡：没有独立任务时仍可使用已存在的轮次快照。
-            List<TaskSnapshot> legacy = repository.recentFrames(conversationId, TASK_INDEX_LIMIT);
-            return legacy == null ? List.of() : legacy;
-        }
-        List<TaskSnapshot> result = new java.util.ArrayList<>();
+
+        // 再取会话中最早创建的任务的最新版本；即使它已退出近期任务范围，也保留回访入口。
+        TaskVersion first = repository.firstTaskLatestVersion(conversationId);
+        if (first != null) byId.putIfAbsent(first.taskId(), first);
+
+        List<TaskVersionCandidate> result = new java.util.ArrayList<>();
         int index = 0;
-        for (TaskState latest : byId.values()) {
-            String ref = "task_" + (++index);
-            var versions = new java.util.TreeMap<Long, TaskState>();
+        // 再为每个入选任务收集版本：按版本号去重，并按版本号从小到大生成候选。
+        for (TaskVersion latest : byId.values()) {
+            var versions = new java.util.TreeMap<Long, TaskVersion>();
+            // 保留该任务的最新版本，用于回到这个任务继续讨论。
             versions.put(latest.version(), latest);
-            for (TaskState state : repository.recentTaskVersions(conversationId, latest.frameId(), 2)) {
+
+            // 取该任务最近两个版本，用于回访近期修改前后的状态；其中可能包含上面的最新版本。
+            for (TaskVersion state : repository.recentTaskVersions(conversationId, latest.taskId(), 2)) {
                 versions.putIfAbsent(state.version(), state);
             }
-            TaskState initial = repository.firstTaskVersion(conversationId, latest.frameId());
+
+            // 取当前遍历任务的第一个版本，用于回到该任务最初那一轮；每个入选任务都会取。
+            TaskVersion initial = repository.firstTaskVersion(conversationId, latest.taskId());
             if (initial != null) versions.putIfAbsent(initial.version(), initial);
-            if (initial != null && initial.frame() == null) {
-                TaskState executable = repository.firstExecutableTaskVersion(conversationId, latest.frameId());
+
+            // 若第一个版本没有有效查询定义（例如仍在澄清），再保留该任务最早有有效查询定义的版本。
+            if (initial != null && initial.queryDefinition() == null) {
+                TaskVersion executable = repository.firstExecutableTaskVersion(conversationId, latest.taskId());
                 if (executable != null) versions.putIfAbsent(executable.version(), executable);
             }
-            if (latest.successfulFrame() != null && !versions.containsKey(latest.successfulFrame().version())) {
-                TaskState success = repository.taskVersion(conversationId, latest.frameId(), latest.successfulFrame().version());
-                if (success != null) versions.putIfAbsent(success.version(), success);
+
+            // 取该任务最近一次有效计划执行成功的版本；后续失败或澄清不会让它退出候选范围。
+            TaskVersion success = repository.latestSuccessfulTaskVersion(conversationId, latest.taskId());
+            if (success != null) versions.putIfAbsent(success.version(), success);
+
+            // 校验版本归属，为每个确定的任务版本分配仅在本次规划输入中有效的候选别名。
+            for (TaskVersion state : versions.values()) {
+                if (!conversationId.equals(state.conversationId()) || !latest.taskId().equals(state.taskId()))
+                    throw new IllegalStateException("任务版本归属与候选索引不一致");
+                result.add(new TaskVersionCandidate("candidate_" + (++index), state));
             }
-            for (TaskState state : versions.values()) result.add(TaskSnapshot.candidate(state, ref));
         }
         return List.copyOf(result);
     }
 
-    private static String renderCurrentTask(TaskState state,
+    private static String renderCurrentTask(TaskVersion state,
             List<com.cexpilot.evidence.EvidenceAssembler.Entry> evidence) {
-        StringBuilder out = new StringBuilder("【当前任务】frame_id=").append(state.frameId())
+        StringBuilder out = new StringBuilder("【当前任务】task_id=").append(state.taskId())
                 .append("，version=").append(state.version()).append("，status=").append(state.status())
                 .append("，请求时间=").append(state.requestTime()).append("，时区=").append(state.timezone())
                 .append("，原始问题：「").append(state.originQuestion()).append("」\n");
         out.append(ClarificationAnswer.render(state.clarificationAnswers()));
-        if (state.logicalPlan() != null && (state.frame() == null || !state.dialogue().isEmpty())) {
+        if (state.queryDefinition() != null && state.queryDefinition().logicalPlan() != null && !state.dialogue().isEmpty()) {
             out.append("已保存有效计划（按本轮补充继续规划）：").append(storedPlanForContext(state, evidence)).append('\n');
         }
         if (!state.dialogue().isEmpty()) {
             out.append("【未完成任务接续】下列补充均属于该任务，不用最后一句覆盖原问题。\n");
-            for (TaskState.Dialogue step : state.dialogue()) {
+            for (TaskVersion.Dialogue step : state.dialogue()) {
                 out.append("用户：").append(step.question()).append('\n');
                 if (step.response() != null) out.append("系统：").append(step.response()).append('\n');
             }
@@ -134,56 +148,35 @@ public class ConversationContextService {
         return out.toString();
     }
 
-    /** 存储计划中的 evidence_ref 是旧轮别名，展示时按持久化焦点重新映射到本轮候选。 */
-    private static com.fasterxml.jackson.databind.JsonNode storedPlanForContext(TaskState state,
+    /** 存储计划只含稳定 factId，展示时才生成本轮 evidence_ref，不修改持久化定义。 */
+    private static com.fasterxml.jackson.databind.JsonNode storedPlanForContext(TaskVersion state,
             List<com.cexpilot.evidence.EvidenceAssembler.Entry> evidence) {
-        var copy = state.logicalPlan().deepCopy();
+        var copy = state.queryDefinition().logicalPlan().deepCopy();
         var byFact = new java.util.HashMap<String, String>();
         for (var entry : evidence) byFact.put(entry.fact().factId(), entry.ref());
         for (var metric : copy.path("metrics")) {
             if (!"pinned_result".equals(metric.path("reference_mode").asText()) || !metric.isObject()) continue;
-            String ref = null;
-            if (state.frame() != null && state.frame().focus() != null) {
-                for (var target : state.frame().targets()) {
-                    if (!target.groupId().equals(metric.path("id").asText())) continue;
-                    for (var node : state.frame().focus().path("evidence_nodes")) {
-                        if (target.physicalId().equals(node.path("node_id").asText())) {
-                            ref = byFact.get(node.path("fact_id").asText());
-                        }
-                    }
-                }
-            }
-            ((com.fasterxml.jackson.databind.node.ObjectNode) metric).put("evidence_ref", ref == null ? "不可用" : ref);
+            String ref = byFact.get(metric.path("evidence_fact_id").asText());
+            var rendered = (com.fasterxml.jackson.databind.node.ObjectNode) metric;
+            rendered.remove("evidence_fact_id");
+            rendered.put("evidence_ref", ref == null ? "不可用" : ref);
         }
         return copy;
     }
 
-    /** 活动 frame 焦点引用的 factId 集合（R12）：事实候选排序时排最前。 */
-    private static java.util.Set<String> focusFactIds(QueryFrame frame) {
+    /** 活动 definition 焦点引用的 factId 集合（R12）：事实候选排序时排最前。 */
+    private static java.util.Set<String> focusFactIds(ExecutionSummary execution) {
         java.util.Set<String> ids = new java.util.LinkedHashSet<>();
-        if (frame == null || frame.focus() == null) {
+        if (execution == null || execution.focus() == null) {
             return ids;
         }
-        for (com.fasterxml.jackson.databind.JsonNode node : frame.focus().path("evidence_nodes")) {
+        for (com.fasterxml.jackson.databind.JsonNode node : execution.focus().path("evidence_nodes")) {
             String factId = node.path("fact_id").asText(null);
             if (factId != null && !factId.isBlank()) {
                 ids.add(factId);
             }
         }
         return ids;
-    }
-
-    /** 会话状态列的 JSON 读取：损坏时降级为 null 只记日志。 */
-    private com.fasterxml.jackson.databind.JsonNode loadStateJson(String json, String name) {
-        if (json == null || json.isBlank()) {
-            return null;
-        }
-        try {
-            return new com.fasterxml.jackson.databind.ObjectMapper().readTree(json);
-        } catch (Exception e) {
-            log.warn("会话状态 {} 反序列化失败，本轮忽略 {}: {}", name, name, e.getMessage());
-            return null;
-        }
     }
 
     /** 可引用历史事实：未过期且有缓存 payload 的 FACT，焦点事实（R12）排最前、其余按取数时间倒序分配稳定短别名。读不到就空列表。 */
@@ -202,19 +195,6 @@ public class ConversationContextService {
         } catch (Exception e) {
             log.warn("历史事实读取失败，本轮按无可引用事实处理 conversationId={}: {}", conversationId, e.getMessage());
             return List.of();
-        }
-    }
-
-    private QueryFrame loadActiveFrame(String conversationId) {
-        String json = repository.findActiveFrameJson(conversationId);
-        if (json == null || json.isBlank()) {
-            return null;
-        }
-        try {
-            return QueryFrame.fromJson(json);
-        } catch (Exception e) {
-            log.warn("活动 frame 反序列化失败，本轮降级为纯文本历史 conversationId={}: {}", conversationId, e.getMessage());
-            return null;
         }
     }
 
@@ -239,52 +219,22 @@ public class ConversationContextService {
         return new TextHistory(sb.toString(), queries.size());
     }
 
-    static String render(QueryFrame frame, String textHistory) {
-        return render(frame, textHistory, List.of(), null, null, List.of());
-    }
-
-    static String render(QueryFrame frame, String textHistory,
-                         List<com.cexpilot.evidence.EvidenceAssembler.Entry> evidence) {
-        return render(frame, textHistory, evidence, null, null, List.of());
-    }
-
-    static String render(QueryFrame frame, String textHistory,
+    static String render(TaskVersion version, String textHistory,
                          List<com.cexpilot.evidence.EvidenceAssembler.Entry> evidence,
-                         com.fasterxml.jackson.databind.JsonNode pendingTask,
-                         com.fasterxml.jackson.databind.JsonNode lastAttempt) {
-        return render(frame, textHistory, evidence, pendingTask, lastAttempt, List.of());
-    }
-
-    static String render(QueryFrame frame, String textHistory,
-                         List<com.cexpilot.evidence.EvidenceAssembler.Entry> evidence,
-                         com.fasterxml.jackson.databind.JsonNode pendingTask,
-                         com.fasterxml.jackson.databind.JsonNode lastAttempt,
-                         List<TaskSnapshot> tasks) {
+                         List<TaskVersionCandidate> tasks) {
+        QueryDefinition definition = version == null ? null : version.queryDefinition();
         StringBuilder sb = new StringBuilder();
-        if (frame != null) {
+        if (definition != null) {
             sb.append("【活动查询状态】（程序维护的结构化条件，可信，优先于下方文字历史）\n");
-            sb.append("frame 请求时间=").append(frame.requestTime())
-                    .append("，时区=").append(frame.timezone() == null ? "未携带" : frame.timezone()).append('\n');
-            for (EffectiveTarget target : frame.targets()) {
+            sb.append("查询定义时间基准=").append(definition.requestTime())
+                    .append("，时区=").append(definition.timezone() == null ? "未携带" : definition.timezone()).append('\n');
+            for (EffectiveTarget target : definition.targets()) {
                 sb.append(renderTarget(target)).append('\n');
             }
+            if (version.executionSummary() != null && !version.executionSummary().nodeMetadata().isEmpty())
+                sb.append("上次执行元数据（不是固定要求）=").append(version.executionSummary().nodeMetadata()).append('\n');
             // 当前焦点（R12）：事实候选里焦点排最前，聚合/比较指代优先绑定
-            sb.append(renderFocus(frame, evidence, true));
-            if (frame.pendingClarification() != null && !frame.pendingClarification().isNull()) {
-                sb.append("【待补条件】上一轮未完成的澄清：").append(frame.pendingClarification()).append('\n');
-            }
-        }
-        // 待补任务独立于 frame 渲染（R1）：新会话首轮澄清没有 frame 也要能接续原任务
-        if (pendingTask != null) {
-            sb.append("【待补条件】上一轮有未完成的澄清，原问题：「").append(pendingTask.path("question").asText())
-                    .append("」，等待用户补充：").append(pendingTask.path("clarify").asText())
-                    .append("。若用户本轮在补充该条件，请基于原问题完成原任务，不要当作全新问题。\n");
-        }
-        // 失败尝试独立于 frame 渲染（R2）：重试/换条件延续失败任务时以此为基准，不退回更早话题
-        if (lastAttempt != null) {
-            sb.append("【最近失败尝试】问题：「").append(lastAttempt.path("question").asText())
-                    .append("」执行失败。用户表达\"再试一次\"或在该问题上换条件延续时，以它为基准生成计划，")
-                    .append("不要接续更早的话题。\n");
+            sb.append(renderFocus(version.executionSummary(), evidence, true));
         }
         // 可引用事实段先于文本历史：预算不足时优先裁文本历史，事实索引完整保留
         sb.append(com.cexpilot.evidence.EvidenceAssembler.render(evidence));
@@ -299,9 +249,9 @@ public class ConversationContextService {
     }
 
     /** 焦点使用本轮同一份候选映射，直接给出可输出的 ref；过滤/过期的焦点明确标成不可用。 */
-    private static String renderFocus(QueryFrame frame,
+    private static String renderFocus(ExecutionSummary execution,
                                      List<com.cexpilot.evidence.EvidenceAssembler.Entry> evidence, boolean active) {
-        if (frame.focus() == null) {
+        if (execution == null || execution.focus() == null) {
             return "";
         }
         var byFactId = new java.util.HashMap<String, com.cexpilot.evidence.EvidenceAssembler.Entry>();
@@ -309,7 +259,7 @@ public class ConversationContextService {
             byFactId.put(entry.fact().factId(), entry);
         }
         StringBuilder s = new StringBuilder();
-        for (com.fasterxml.jackson.databind.JsonNode node : frame.focus().path("evidence_nodes")) {
+        for (com.fasterxml.jackson.databind.JsonNode node : execution.focus().path("evidence_nodes")) {
             String factId = node.path("fact_id").asText(null);
             if (factId == null || factId.isBlank()) {
                 continue;
@@ -338,32 +288,25 @@ public class ConversationContextService {
     }
 
     /** 近期任务索引段（R3 一期）：RESUME 回访的选择依据，任务主题摘要用于选择，执行条件以快照为准。 */
-    private static String renderTaskIndex(List<TaskSnapshot> tasks,
+    private static String renderTaskIndex(List<TaskVersionCandidate> tasks,
             List<com.cexpilot.evidence.EvidenceAssembler.Entry> evidence) {
-        StringBuilder sb = new StringBuilder("【近期任务索引】按任务及版本选择。RESUME 指定 task_ref 和 state_ref；")
+        StringBuilder sb = new StringBuilder("【近期任务索引】按任务及版本选择。RESUME 指定一个 candidate_ref；")
                 .append("回到最开始的查询选择 first_query_no 最小任务的原查询版本；最初曾澄清时可选择首个有效条件版本。明确第几轮则选择对应轮次版本。回到某任务继续可选择最新版本。")
                 .append("无法唯一定位时澄清。\n");
-        for (TaskSnapshot task : tasks) {
-            sb.append("- task_ref=").append(task.taskRef()).append("，state_ref=").append(task.stateRef())
-                    .append("，frame_id=").append(task.state().frameId()).append("，version=").append(task.state().version())
-                    .append("，first_query_no=").append(task.state().firstQueryNo())
-                    .append("，轮次 ").append(task.turnId()).append("（第 ").append(task.queryNo()).append(" 轮）")
-                    .append("，status=").append(task.state().status()).append("，请求时间=").append(task.state().requestTime())
-                    .append("，时区=").append(task.state().timezone()).append("，问题「").append(task.question()).append("」\n");
-            if (task.frame() != null) {
-                sb.append("请求时间=").append(task.frame().requestTime()).append("，时区=")
-                        .append(task.frame().timezone()).append('\n');
-                for (EffectiveTarget target : task.frame().targets()) sb.append(renderTarget(target)).append('\n');
-                sb.append(renderFocus(task.frame(), evidence, false));
-                if (task.state().logicalPlan() != null) {
-                    var plan = storedPlanForContext(task.state(), evidence);
-                    boolean pinned = false;
-                    for (var metric : plan.path("metrics")) pinned |= "pinned_result".equals(metric.path("reference_mode").asText());
-                    if (pinned || !plan.path("calculations").isEmpty()) sb.append("完整计划=").append(plan).append('\n');
-                }
-            } else if (task.state().logicalPlan() != null) {
-                sb.append("有效计划=").append(storedPlanForContext(task.state(), evidence)).append('\n');
+        for (TaskVersionCandidate candidate : tasks) {
+            TaskVersion version = candidate.taskVersion();
+            sb.append("- candidate_ref=").append(candidate.candidateRef())
+                    .append("，task_id=").append(version.taskId()).append("，version=").append(version.version())
+                    .append("，first_query_no=").append(version.firstQueryNo())
+                    .append("，轮次 ").append(version.turnId()).append("（第 ").append(version.lastQueryNo()).append(" 轮）")
+                    .append("，status=").append(version.status()).append("，请求时间=").append(version.requestTime())
+                    .append("，时区=").append(version.timezone()).append("，原始问题「").append(version.originQuestion()).append("」\n");
+            if (version.queryDefinition() != null) {
+                for (EffectiveTarget target : version.queryDefinition().targets()) sb.append(renderTarget(target)).append('\n');
+                if (version.queryDefinition().logicalPlan() != null)
+                    sb.append("完整计划=").append(storedPlanForContext(version, evidence)).append('\n');
             }
+            sb.append(renderFocus(version.executionSummary(), evidence, false));
         }
         return sb.toString();
     }
@@ -401,9 +344,6 @@ public class ConversationContextService {
             if (source != null) fixed.put(field, source.requirementOrigin() == com.cexpilot.metric.ConditionOrigin.EXPLICIT);
         }
         if (!fixed.isEmpty()) s.append("，固定要求（true=用户固定，false=默认/自动）=").append(fixed);
-        if (t.executionMetadata() != null) {
-            s.append("，上次执行元数据（只说明上次结果，不是本次固定要求）=").append(t.executionMetadata());
-        }
         return s.toString();
     }
 

@@ -1,6 +1,6 @@
 package com.cexpilot.dag;
 
-import com.cexpilot.conversation.QueryFrame;
+import com.cexpilot.conversation.QueryDefinition;
 import com.cexpilot.metric.CompiledPlan;
 import com.cexpilot.metric.EffectiveTarget;
 import com.cexpilot.metric.InstrumentSpec;
@@ -49,9 +49,8 @@ class InheritanceValidatorTest {
                 null, null, null, "USDT", "kline", "v1");
     }
 
-    private static QueryFrame frame(EffectiveTarget... targets) {
-        return new QueryFrame("frame-1", "conv-1", 1, "turn-1", "昨天币安 BTC 最高价",
-                T1.toString(), SH.getId(), List.of(targets), null, null, null);
+    private static QueryDefinition frame(EffectiveTarget... targets) {
+        return new QueryDefinition(T1.toString(), SH.getId(), null, List.of(targets));
     }
 
     private static CompiledPlan plan(EffectiveTarget target, String timeJson) throws Exception {
@@ -203,8 +202,7 @@ class InheritanceValidatorTest {
     @Test
     void 同所同币多指标的不同时间窗口未变时不误报() {
         var original = multiWindowPlan(-2, false);
-        var f = new QueryFrame("f", "conv-1", 1, "t1", "两个区间", T1.toString(), SH.getId(),
-                original.targets(), null, null, null);
+        var f = new QueryDefinition(T1.toString(), SH.getId(), null, original.targets());
         org.junit.jupiter.api.Assertions.assertEquals(Set.of(), validator.diffKeys(f, original, new RequestContext(SH, T1)));
         org.junit.jupiter.api.Assertions.assertEquals(Set.of(), validator.diffKeys(f, multiWindowPlan(-2, true),
                 new RequestContext(SH, T1)), "重排节点不能改变配对");
@@ -213,8 +211,7 @@ class InheritanceValidatorTest {
     @Test
     void 同所同币的第二个指标改变时间必须检出() {
         var original = multiWindowPlan(-2, false);
-        var f = new QueryFrame("f", "conv-1", 1, "t1", "两个区间", T1.toString(), SH.getId(),
-                original.targets(), null, null, null);
+        var f = new QueryDefinition(T1.toString(), SH.getId(), null, original.targets());
         org.junit.jupiter.api.Assertions.assertEquals(Set.of("time"),
                 validator.diffKeys(f, multiWindowPlan(-1, false), new RequestContext(SH, T1)));
         assertNotNull(validator.check(f, multiWindowPlan(-1, true), Set.of(), new RequestContext(SH, T1)));

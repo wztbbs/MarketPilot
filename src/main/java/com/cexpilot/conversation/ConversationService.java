@@ -74,8 +74,8 @@ public class ConversationService {
         return repository.findLatestByVisitorId(visitorId);
     }
 
-    /** 渲染注入 system prompt 的最近对话上下文。 */
-    public String renderContext(String conversationId) {
+    /** 渲染注入 Answer prompt 的最近几轮对话纯文本（用户/助手逐行，答案截断）。 */
+    public String renderRecentDialogue(String conversationId) {
         List<QueryRecord> queries = repository.recentQueries(conversationId, HISTORY_QUERY_LIMIT);
         if (queries.isEmpty()) {
             return "";
@@ -127,37 +127,7 @@ public class ConversationService {
         return new TurnHandle(queryNo, turnId, state.fencingToken());
     }
 
-    /**
-     * 结束时提交轮次（短事务）：置终态（SUCCEEDED/FAILED 等）、补 answer/trace_id/logical_plan_json/finished_at、
-     * 清 running_turn_id、version+1。fencing token 不匹配（租约过期被接管）时不覆盖会话状态，
-     * 轮次行仍按事实落终态。
-     *
-     * @param logicalPlanJson 校验通过的 LogicalPlan 原文 JSON，规划未通过校验时为 null
-     * @param frameJson       本轮产生的活动 QueryFrame JSON；仅成功轮次传入，失败轮次传 null（不覆盖活动 frame）
-     * @param lastAttemptJson 失败轮次传入的任务快照 JSON（R2），成功轮次传 null；SUCCEEDED 同时清空
-     *                        待补澄清任务与历史失败尝试（任务已了结，NEEDS_CLARIFICATION 不清）
-     */
-    @Transactional
-    public boolean finishTurn(String conversationId, TurnHandle turn, String status, String answer, String traceId,
-                              String logicalPlanJson, String frameJson, String lastAttemptJson) {
-        repository.finishTurn(turn.turnId(), status, answer, traceId, logicalPlanJson, frameJson);
-        boolean frameUpdated = false;
-        if (frameJson != null) {
-            // 4.3：用真实写入结果（fencing 不匹配被拒时为 false），CONTEXT_COMMITTED 不再说谎
-            frameUpdated = repository.saveActiveFrame(conversationId, turn.turnId(), turn.fencingToken(), frameJson);
-        }
-        if ("SUCCEEDED".equals(status)) {
-            repository.clearTaskState(conversationId, turn.turnId(), turn.fencingToken());
-        } else if ("FAILED".equals(status) && lastAttemptJson != null) {
-            repository.saveLastAttempt(conversationId, turn.turnId(), turn.fencingToken(), lastAttemptJson);
-        }
-        // 返回 false = 租约过期、占用已被新请求接管：正常路径，不覆盖新状态即可
-        repository.releaseTurn(conversationId, turn.turnId(), turn.fencingToken());
-        repository.touchConversation(conversationId, null);
-        return frameUpdated;
-    }
-
-    public record TaskCommit(boolean updated, String frameId, long version, TaskState state) {}
+    public record TaskCommit(boolean updated, String taskId, long version, TaskVersion taskVersion) {}
 
     public com.fasterxml.jackson.databind.JsonNode routingState(String conversationId) { return repository.routingState(conversationId); }
 
@@ -210,61 +180,36 @@ public class ConversationService {
             String answer, String traceId, com.cexpilot.metric.CompiledPlan plan,
             com.fasterxml.jackson.databind.JsonNode evidence, TaskScope scope, java.time.Instant requestTime,
             java.time.ZoneId zone, String taskResponse) {
-        String logicalJson = plan == null ? null : plan.logicalPlanJson().toString();
         if (!repository.ownsTurnForUpdate(conversationId, turn.turnId(), turn.fencingToken())) {
-            repository.finishTurn(turn.turnId(), status, answer, traceId, logicalJson, null);
+            repository.finishTurn(turn.turnId(), status, answer, traceId);
             return new TaskCommit(false, null, 0, null);
         }
         if (scope == null) {
             // 出域/无任务决策的普通说明不改变已有任务。
-            repository.finishTurn(turn.turnId(), status, answer, traceId, logicalJson, null);
+            repository.finishTurn(turn.turnId(), status, answer, traceId);
             repository.releaseTurn(conversationId, turn.turnId(), turn.fencingToken());
             repository.touchConversation(conversationId, null);
             return new TaskCommit(false, null, 0, null);
         }
-        TaskState base = scope.action() == TaskScope.Action.NEW ? null : scope.base();
+        TaskVersion base = scope.action() == TaskScope.Action.NEW ? null : scope.base();
         if (base != null && !conversationId.equals(base.conversationId())) {
             throw new IllegalArgumentException("任务不属于当前会话");
         }
-        String frameId = base == null ? UUID.randomUUID().toString() : base.frameId();
-        TaskState latest = repository.findTask(conversationId, frameId);
-        long version = latest == null ? (base == null ? 1 : base.version() + 1) : latest.version() + 1;
+        String taskId = base == null ? UUID.randomUUID().toString() : base.taskId();
+        Task task = repository.findTask(conversationId, taskId);
+        if (base != null && (task == null || base.version() > task.latestVersion()))
+            throw new IllegalArgumentException("继承来源任务版本已不存在");
+        long version = task == null ? 1 : task.latestVersion() + 1;
         var selectedContext = scope.executionContext(new com.cexpilot.runtime.RequestContext(zone, requestTime));
-        TaskState next = TaskState.complete(frameId, conversationId, version, base, turn, question, status,
+        TaskVersion next = TaskVersion.complete(taskId, conversationId, version, base, turn, question, status,
                 taskResponse == null && plan == null ? answer : taskResponse, plan, evidence,
                 selectedContext.requestTime(), selectedContext.userZone());
-        // 来源版本可以很旧，但失败/澄清不能把该任务最近成功状态倒退到那个旧版本。
-        if (latest != null && (!"SUCCEEDED".equals(status) || plan == null)) {
-            next = next.withSuccessfulFrame(latest.successfulFrame());
-        }
-        repository.saveTask(next);
-        repository.finishTaskQuery(turn.turnId(), status, answer, traceId, logicalJson, next, scope);
+        repository.saveTaskVersion(next);
+        repository.finishTaskQuery(turn.turnId(), status, answer, traceId, next, scope);
         repository.activateTask(conversationId, next);
         repository.releaseTurn(conversationId, turn.turnId(), turn.fencingToken());
         repository.touchConversation(conversationId, null);
-        return new TaskCommit(true, frameId, version, next);
-    }
-
-    /** 兼容旧调用（无失败任务快照）。 */
-    @Transactional
-    public void finishTurn(String conversationId, TurnHandle turn, String status, String answer, String traceId,
-                           String logicalPlanJson, String frameJson) {
-        finishTurn(conversationId, turn, status, answer, traceId, logicalPlanJson, frameJson, null);
-    }
-
-    /**
-     * 澄清轮次（NEEDS_CLARIFICATION）：独立保存待补任务（原问题 + 澄清问题，R1）——
-     * 不依赖活动 frame 存在，新会话首轮澄清也能接续；澄清不挂在旧任务的 frame 上。
-     * 须在 finishTurn 释放占用前调用。
-     */
-    @Transactional
-    public void recordPendingTask(String conversationId, TurnHandle turn, String question, String clarify) {
-        com.fasterxml.jackson.databind.node.ObjectNode pending =
-                new com.fasterxml.jackson.databind.ObjectMapper().createObjectNode();
-        pending.put("question", question);
-        pending.put("clarify", clarify);
-        pending.put("turnId", turn.turnId());
-        repository.savePendingTask(conversationId, turn.turnId(), turn.fencingToken(), pending.toString());
+        return new TaskCommit(true, taskId, version, next);
     }
 
     private static String abbreviate(String text, int max) {

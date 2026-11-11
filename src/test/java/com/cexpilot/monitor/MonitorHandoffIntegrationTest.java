@@ -50,13 +50,12 @@ class MonitorHandoffIntegrationTest {
     }
     @AfterEach void close() { runner.close(); f.close(); assertNull(QueryBudget.current()); }
 
-    PlannerInput source() {
+    PlanningContext source() {
         var target = new EffectiveTarget("m1", "metric_0", "binance", ConditionOrigin.EXPLICIT, "price.change_pct", "range_statistic",
                 f.mapper.createObjectNode().put("market_type", "spot").put("base", "BTC").put("quote", "USDT"),
                 ConditionOrigin.DEFAULT, f.mapper.createObjectNode().put("type", "calendar_period").put("unit", "day"),
                 "5m", ConditionOrigin.DEFAULT, false, ConditionOrigin.DEFAULT, null, null, null, "percent", "kline", catalog.version());
-        return new PlannerInput("历史快照不应绑定到监控", new QueryFrame("source_frame", "c", 3, "source_turn", "昨天现货BTC跌了多少", "2026-10-25T06:00:00Z", "UTC",
-                List.of(target), f.mapper.createObjectNode().put("value", -9), null, new QueryFrame.LastAttempt("source_turn", "SUCCEEDED")));
+        return new PlanningContext("历史快照不应绑定到监控", com.cexpilot.conversation.ContextFixtures.version("source_frame", "c", 3, "source_turn", "昨天现货BTC跌了多少", "2026-10-25T06:00:00Z", "UTC", List.of(target), f.mapper.createObjectNode().put("value", -9), "SUCCEEDED"));
     }
     ExecutionResult ask(String question, String response) {
         return ask(question,response,"t1",f.mapper.createObjectNode().put("active_agent","query"));
@@ -71,9 +70,11 @@ class MonitorHandoffIntegrationTest {
         var llm = new PlanningLlm(model, new LlmConfig(), prompts); var dag = new DagConfig(); dag.setPlannerMaxRetries(0);
         var monitor = new MonitorAgent(new MonitorPlanner(llm, prompts, catalog, tools, validator, dag), prompts, flow);
         var dispatcher = new AgentDispatcher(new IntentRouter(llm, prompts), new AgentRegistry(List.of(monitor)), new AgentContextAssembler());
-        var result = dispatcher.execute(question, "用户之前查询了昨天的现货涨跌幅", "trace", events::add, null,
-                new RequestContext(ZoneId.of("Asia/Shanghai"), f.clock.instant()), null, null, source(), new EvidenceSession("c", turn),
-                state, r -> {}, "alice");
+        var result = dispatcher.execute(com.cexpilot.agent.AgentExecutionRequest.builder(question,"trace",events::add)
+                .history("用户之前查询了昨天的现货涨跌幅")
+                .requestContext(new RequestContext(ZoneId.of("Asia/Shanghai"), f.clock.instant()))
+                .planningContext(source()).session(new EvidenceSession("c", turn))
+                .routingState(state).visitor("alice").build());
         assertTrue(responses.isEmpty());
         return result;
     }
@@ -87,7 +88,7 @@ class MonitorHandoffIntegrationTest {
         var result = ask("那就监控这个现货，最近一小时跌超过2%时提醒我", candidate().toString());
         assertEquals("monitor", result.agentType()); assertEquals(1, result.routerLlmCalls()); assertEquals(1, result.plannerLlmCalls());
         assertEquals("PENDING_CONFIRMATION", result.agentPayload().path("status").asText());
-        assertEquals("source_frame", result.agentPayload().at("/handoff/source_frame_id").asText());
+        assertEquals("source_frame", result.agentPayload().at("/handoff/source_task_id").asText());
         assertEquals("PENDING_CONFIRMATION", result.agentPayload().at("/handoff/outcome").asText());
         assertEquals(1, f.count("monitor_rule")); assertEquals(0, f.count("monitor_execution")); assertEquals(0, f.count("notification_delivery"));
         assertTrue(f.repository.due(f.clock.instant()).isEmpty());
@@ -126,14 +127,14 @@ class MonitorHandoffIntegrationTest {
         conversations.finishRoutedTurn("c",new ConversationService.TurnHandle(1,"t1",0),question,result.turnStatus(),result.answer(),"trace",
                 null,result.evidence(),null,f.clock.instant(),ZoneId.of("Asia/Shanghai"),result.clarify(),"monitor",result.agentPayload());
         var state=repository.routingState("c");
-        assertEquals("source_frame",state.at("/monitor_context/handoff/source_frame_id").asText());
-        assertEquals("source_frame",repository.allQueries("c").get(0).planning().at("/handoff/source_frame_id").asText());
+        assertEquals("source_frame",state.at("/monitor_context/handoff/source_task_id").asText());
+        assertEquals("source_frame",repository.allQueries("c").get(0).planning().at("/handoff/source_task_id").asText());
         f.jdbc.update("UPDATE conversation_state SET running_turn_id='t2',lease_until=? WHERE conversation_id='c'",LocalDateTime.now().plusHours(1));
         var continued=ask("最近一小时跌超过2%时提醒我",candidate().toString(),"t2",state);
         assertEquals("PENDING_CONFIRMATION",continued.agentPayload().path("status").asText());
         var nextInput=f.json.read(calls.get(3).get(1).content());
-        assertEquals("source_frame",nextInput.at("/context/monitor_context/handoff/source_frame_id").asText());
-        assertEquals(1,f.count("monitor_rule"));assertEquals(0,f.count("conversation_frame"));
+        assertEquals("source_frame",nextInput.at("/context/monitor_context/handoff/source_task_id").asText());
+        assertEquals(1,f.count("monitor_rule"));assertEquals(0,f.count("conversation_task"));
         assertTrue(f.repository.due(f.clock.instant()).isEmpty());
     }
 
