@@ -68,8 +68,10 @@ class MonitorHandoffIntegrationTest {
             return new ChatResponse(responses.remove(), List.of(), 10, 5);
         };
         var llm = new PlanningLlm(model, new LlmConfig(), prompts); var dag = new DagConfig(); dag.setPlannerMaxRetries(0);
-        var monitor = new MonitorAgent(new MonitorPlanner(llm, prompts, catalog, tools, validator, dag), prompts, flow);
-        var dispatcher = new AgentDispatcher(new IntentRouter(llm, prompts), new AgentRegistry(List.of(monitor)), new AgentContextAssembler());
+        var monitor = new MonitorAgent(new MonitorPlanHooks(prompts, catalog, tools, validator, dag, flow), prompts, flow);
+        var dispatcher = new AgentDispatcher(new IntentRouter(llm, prompts), new AgentRegistry(List.of(monitor)), new AgentContextAssembler(),
+                new QueryExecutionConfig(), new HarnessRolloutConfig(), new AnalysisMonitorHandoff(),
+                null, new PlanEngine(tools, prompts, llm, null, null));
         var result = dispatcher.execute(com.cexpilot.agent.AgentExecutionRequest.builder(question,"trace",events::add)
                 .history("用户之前查询了昨天的现货涨跌幅")
                 .requestContext(new RequestContext(ZoneId.of("Asia/Shanghai"), f.clock.instant()))

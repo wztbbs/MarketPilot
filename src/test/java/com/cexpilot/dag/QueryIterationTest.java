@@ -175,7 +175,9 @@ class QueryIterationTest {
         var router=new com.cexpilot.agent.IntentRouter(new com.cexpilot.agent.PlanningLlm(script,new LlmConfig(),prompts),prompts);
         var dispatcher=new com.cexpilot.agent.AgentDispatcher(router,
                 new com.cexpilot.agent.AgentRegistry(List.of(new com.cexpilot.agent.MarketAnalysisAgent(query))),
-                new com.cexpilot.agent.AgentContextAssembler(),policy);
+                new com.cexpilot.agent.AgentContextAssembler(),policy,new com.cexpilot.config.HarnessRolloutConfig(),
+                new com.cexpilot.agent.AnalysisMonitorHandoff(),null,
+                new com.cexpilot.agent.PlanEngine(null,prompts,null,null,null));
         var result=dispatcher.execute(com.cexpilot.agent.AgentExecutionRequest.builder("成交额","t",events::add)
                 .requestContext(REQUEST).compiledPlanSink(committed::set).planningContext(new PlanningContext("",null))
                 .session(new EvidenceSession("c","turn")).routingState(JSON.createObjectNode()).selectedAgent(selected->{}).build());
