@@ -1,0 +1,23 @@
+package com.cexpilot.business.cex.market.markprice;
+
+import com.cexpilot.business.cex.market.model.Candle;
+import com.cexpilot.business.cex.market.series.SeriesCoverage;
+import com.cexpilot.business.cex.time.TimeRange;
+import com.cexpilot.business.cex.time.CandleInterval;
+
+import java.util.List;
+
+/**
+ * 一次标记/指数价格历史查询的完整结果。
+ *
+ * @param requested 用户原始要求（区间为 TimeSpec 消解结果，未外扩）
+ * @param effective 经 SeriesQueryPolicy 对齐后的实际执行区间（未对齐粒度边界时被外扩）
+ * @param candles   通过覆盖核对的价格 K 线
+ */
+public record MarkPriceQueryResult(PriceType priceType,
+                                   TimeRange requested,
+                                   TimeRange effective,
+                                   List<Candle> candles,
+                                   SeriesCoverage coverage,
+                                   CandleInterval interval) {
+}

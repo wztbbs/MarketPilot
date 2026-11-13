@@ -1,0 +1,24 @@
+package com.cexpilot.business.cex.metric;
+
+import com.cexpilot.business.cex.market.Exchange;
+import java.util.Objects;
+
+/** 快照形态的指标查询：当前时刻取值，没有时间窗口、粒度与未完结数据开关；depth 仅盘口使用。 */
+public record SnapshotQuery(MetricBinding binding, Integer depth) implements MetricQuery {
+    public SnapshotQuery(MetricBinding binding) {
+        this(binding, null);
+    }
+
+    public SnapshotQuery {
+        Objects.requireNonNull(binding, "binding");
+        InstrumentRules.requireSupportedUsdt(binding);
+        if (depth != null && (depth < 5 || depth > 50)) {
+            throw new IllegalArgumentException("depth 必须在 5~50 之间: " + depth);
+        }
+    }
+    public com.cexpilot.business.cex.market.MarketType marketType() {
+        return com.cexpilot.business.cex.market.MarketType.parse(binding.instrument().path("market_type").asText());
+    }
+    public Exchange exchange() { return InstrumentRules.exchange(binding); }
+    public String base() { return InstrumentRules.base(binding); }
+}

@@ -30,7 +30,7 @@
 - [B] [Binance 官方 Market Data](https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/rest-api/market-data)：Open Interest、Kline、Funding History、24hr Ticker 等章节。
 - [O] [OKX 官方 API 文档](https://my.okx.com/docs-v5/en/)：Public Data 与 Market Data 章节中的产品、OI、K 线、Funding、Ticker 字段。该链接是官方区域文档入口；使用具体产品规则仍须核对适用地区，不把区域账户规则泛化。
 - [M] [OKX Mark / Last 说明](https://www.okx.com/en-us/help/ii-mark-price-and-last-price)。
-- 项目能力以 [指标目录](../src/main/resources/metrics/cex-perpetual.yml)、[BinanceClient](../src/main/java/com/cexpilot/market/BinanceClient.java)、[OkxClient](../src/main/java/com/cexpilot/market/OkxClient.java) 为准。
+- 项目能力以 [指标目录](../src/main/resources/metrics/cex-perpetual.yml)、[BinanceClient](../src/main/java/com/cexpilot/business/cex/market/BinanceClient.java)、[OkxClient](../src/main/java/com/cexpilot/business/cex/market/OkxClient.java) 为准。
 
 ### 1.3 同样的单期费率，不同的持仓成本
 
@@ -46,7 +46,7 @@
 | --- | --- | --- |
 | Binance 历史 OI | 官方历史接口仅近期范围，见 [Open Interest Statistics](https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Open-Interest-Statistics) | 代码限制最近 30 天；500 条/页、最多 8 页 |
 | OKX 历史 OI | 按具体合约与 period 查询；不能由接口存在推断永久保留 | 100 条/页、最多 40 页；未设置 retentionDays 不等于无限历史 |
-| 成交 / Mark K 线 | 官方可用粒度与近期、历史接口限制各异 | 项目只接入 5m/15m/1h；具体分页和预算见 [时间窗口](../docs/时间窗口.md) |
+| 成交 / Mark K 线 | 官方可用粒度与近期、历史接口限制各异 | 项目只接入 5m/15m/1h；具体分页和预算见 [时间窗口](../docs/cex/market/时间窗口.md) |
 | Funding 样本 | 两所历史接口与结算规则各有范围限制 | 当前只开放最近 N 期，N=1～100；不是指定日期窗口 |
 
 代码常量是首版项目快照，后续修改应以 Source 的 capability 为准；本次没有向交易所实测保留边界。返回条数相同也不代表完整，可能有重复、缺点或错位。
@@ -63,7 +63,7 @@
 
 分页返回空数组也不是“市场没有交易”的证明。OKX 的 candles 与 Funding 历史接口中，`before` 表示取更新的数据，为下界；`after` 表示取更早的数据，为上界。OI 某些统计接口使用 `begin/end`，不能套用参数名。网格也需核对，例如项目 OI 适配对 6h/12h/1d 使用 UTC 变体，不能将 UTC+8 网格直接冒充 UTC 网格。
 
-这些细节只在影响业务解释时需要掌握，具体适配见 [时间窗口](../docs/时间窗口.md)。如以后手工访问 API，必须遵守仓库 [AGENTS.md](../AGENTS.md) 的代理设置，OKX 带 User-Agent；本目录不提供直连官方 API 的示例。
+这些细节只在影响业务解释时需要掌握，具体适配见 [时间窗口](../docs/cex/market/时间窗口.md)。如以后手工访问 API，必须遵守仓库 [AGENTS.md](../AGENTS.md) 的代理设置，OKX 带 User-Agent；本目录不提供直连官方 API 的示例。
 
 ## 4. 对应 CEXPilot Case 与学习练习
 

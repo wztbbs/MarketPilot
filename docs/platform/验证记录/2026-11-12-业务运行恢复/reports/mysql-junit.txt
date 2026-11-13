@@ -1,0 +1,4 @@
+-------------------------------------------------------------------------------
+Test set: com.cexpilot.platform.run.BusinessRunMySqlIT
+-------------------------------------------------------------------------------
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 13.31 s -- in com.cexpilot.platform.run.BusinessRunMySqlIT

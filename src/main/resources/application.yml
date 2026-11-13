@@ -132,3 +132,9 @@ harness:
     http-agents-percent: ${HARNESS_HTTP_AGENTS_PERCENT:100}
     handoff-percent: ${HARNESS_HANDOFF_PERCENT:100}
     cohort-salt: ${HARNESS_COHORT_SALT:harness-v1}
+
+# Demo 默认完全不装配；启用后仍须指定测试访客白名单。
+demo:
+  enabled: ${CEXPILOT_DEMO_ENABLED:false}
+  visitors: ${CEXPILOT_DEMO_VISITORS:}
+  delay-seconds: ${CEXPILOT_DEMO_DELAY_SECONDS:15}

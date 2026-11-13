@@ -71,7 +71,7 @@ flowchart TD
 
 ## 4. 对应 CEXPilot Case 与学习练习
 
-已有 `B4 进阶-量价背离`、`B6 进阶-跨所`，见 [回归题目](../scripts/run_regression.py)。它们可以同时检验取数口径和解释边界。Planner 是否取齐、计算是否正确、Answer 是否过度归因，应通过 [Trace](../docs/trace搭建.md) 分开判断。
+已有 `B4 进阶-量价背离`、`B6 进阶-跨所`，见 [回归题目](../scripts/run_regression.py)。它们可以同时检验取数口径和解释边界。Planner 是否取齐、计算是否正确、Answer 是否过度归因，应通过 [Trace](../docs/cex/operations/trace搭建.md) 分开判断。
 
 当前项目可查询量价、OI、已结算 Funding 和盘口摘要；清算、新闻因果、历史订单簿研究不在当前指标链能力内。下面题目中的这类数据是待补证据，不是可执行能力承诺。
 

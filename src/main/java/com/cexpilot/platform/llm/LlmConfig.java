@@ -1,0 +1,166 @@
+package com.cexpilot.platform.llm;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.context.annotation.Configuration;
+
+/**
+ * LLM 接入配置。normal（首次规划与回答）与 flagship（校验失败后的修复）两套并存，
+ * 各自有独立的 baseUrl/apiKey/model/单价；temperature、步数上限等为全局共享。
+ */
+@Configuration
+@ConfigurationProperties(prefix = "llm")
+public class LlmConfig {
+
+    private ModelConfig normal = new ModelConfig();
+    private ModelConfig flagship = new ModelConfig();
+    private double temperature = 0;
+    /** 单请求最大规划步数（旧工具循环路径使用）。 */
+    private int maxSteps = 4;
+    /** 单请求最大工具调用次数（旧工具循环路径使用）。 */
+    private int maxToolCalls = 8;
+    /** 采样种子（OpenAI 兼容 seed 参数），null = 不下发。用于排查/eval 时复现输出。 */
+    private Long seed;
+
+    public ModelConfig getNormal() {
+        return normal;
+    }
+
+    public void setNormal(ModelConfig normal) {
+        this.normal = normal;
+    }
+
+    public ModelConfig getFlagship() {
+        return flagship;
+    }
+
+    public void setFlagship(ModelConfig flagship) {
+        this.flagship = flagship;
+    }
+
+    public double getTemperature() {
+        return temperature;
+    }
+
+    public void setTemperature(double temperature) {
+        this.temperature = temperature;
+    }
+
+    public Long getSeed() {
+        return seed;
+    }
+
+    public void setSeed(Long seed) {
+        this.seed = seed;
+    }
+
+    public int getMaxSteps() {
+        return maxSteps;
+    }
+
+    public void setMaxSteps(int maxSteps) {
+        this.maxSteps = maxSteps;
+    }
+
+    public int getMaxToolCalls() {
+        return maxToolCalls;
+    }
+
+    public void setMaxToolCalls(int maxToolCalls) {
+        this.maxToolCalls = maxToolCalls;
+    }
+
+    /** 一套 LLM 接入的连接与计费配置。 */
+    public static class ModelConfig {
+
+        /** OpenAI 兼容接口地址。 */
+        private String baseUrl = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+        /** API Key，由环境变量注入。 */
+        private String apiKey = "";
+        /** 模型名。 */
+        private String model = "";
+        /** 输入单价（元/千 token），用于费用估算。 */
+        private double priceInputPer1k = 0;
+        /** 输出单价（元/千 token），用于费用估算。 */
+        private double priceOutputPer1k = 0;
+        /** null = 不下发该参数；Qwen3 混合模型默认开思考，低延迟场景应显式设为 false。 */
+        private Boolean enableThinking;
+        /** null/空 = 不下发；兼容厂商的 thinking.type 参数（GLM/DeepSeek：enabled/disabled/adaptive）。 */
+        private String thinkingType;
+        /** null/空 = 不下发；推理强度（OpenAI reasoning_effort：low/medium/high）。 */
+        private String reasoningEffort;
+        /** false = 关闭连接复用（每次调用重新 TLS 握手），仅用于 A/B 测量握手开销。 */
+        private boolean pooling = true;
+
+        public boolean isPooling() {
+            return pooling;
+        }
+
+        public void setPooling(boolean pooling) {
+            this.pooling = pooling;
+        }
+
+        public Boolean getEnableThinking() {
+            return enableThinking;
+        }
+
+        public void setEnableThinking(Boolean enableThinking) {
+            this.enableThinking = enableThinking;
+        }
+
+        public String getThinkingType() {
+            return thinkingType;
+        }
+
+        public void setThinkingType(String thinkingType) {
+            this.thinkingType = thinkingType;
+        }
+
+        public String getReasoningEffort() {
+            return reasoningEffort;
+        }
+
+        public void setReasoningEffort(String reasoningEffort) {
+            this.reasoningEffort = reasoningEffort;
+        }
+
+        public String getBaseUrl() {
+            return baseUrl;
+        }
+
+        public void setBaseUrl(String baseUrl) {
+            this.baseUrl = baseUrl;
+        }
+
+        public String getApiKey() {
+            return apiKey;
+        }
+
+        public void setApiKey(String apiKey) {
+            this.apiKey = apiKey;
+        }
+
+        public String getModel() {
+            return model;
+        }
+
+        public void setModel(String model) {
+            this.model = model;
+        }
+
+        public double getPriceInputPer1k() {
+            return priceInputPer1k;
+        }
+
+        public void setPriceInputPer1k(double priceInputPer1k) {
+            this.priceInputPer1k = priceInputPer1k;
+        }
+
+        public double getPriceOutputPer1k() {
+            return priceOutputPer1k;
+        }
+
+        public void setPriceOutputPer1k(double priceOutputPer1k) {
+            this.priceOutputPer1k = priceOutputPer1k;
+        }
+    }
+}

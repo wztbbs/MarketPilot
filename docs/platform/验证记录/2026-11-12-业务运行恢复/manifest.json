@@ -1,0 +1,584 @@
+{
+  "archive_format": 1,
+  "archive_kind": "historical_available_evidence",
+  "archived_at_utc": "2026-11-12T09:14:20.999445+00:00",
+  "git_head_at_archive_time": "842a2a56a8b7c1c4ce538e7320dbff315dfa890c",
+  "working_tree_dirty_at_archive_time": true,
+  "source_provenance": "Archive-time snapshot only; execution-time source fingerprints were not recorded.",
+  "suite": {
+    "name": "com.cexpilot.platform.run.BusinessRunMySqlIT",
+    "tests": "3",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "13.307"
+  },
+  "cases": [
+    {
+      "name": "acceptanceBeforeLocalJobIdPersistenceRecoversByOriginalInvocationId",
+      "classname": "com.cexpilot.platform.run.BusinessRunMySqlIT",
+      "time": "4.136"
+    },
+    {
+      "name": "crashAfterBusinessCommitRetriesPublicationWithoutDuplicateBusinessEffect",
+      "classname": "com.cexpilot.platform.run.BusinessRunMySqlIT",
+      "time": "3.982"
+    },
+    {
+      "name": "killedWhileWaitingResumesOriginalPlanWithoutCallback",
+      "classname": "com.cexpilot.platform.run.BusinessRunMySqlIT",
+      "time": "3.517"
+    }
+  ],
+  "environment": {
+    "java.version": "21.0.9",
+    "java.vm.name": "Java HotSpot(TM) 64-Bit Server VM",
+    "os.name": "Mac OS X",
+    "os.arch": "x86_64"
+  },
+  "database": "Real MySQL 8 was checked by the test; exact server patch and image digest were not captured.",
+  "original_junit_sha256": "92aab056e33b8cdac82659508c58993f8f4fff90a328f95b76880eaac4d3336f",
+  "removed_from_junit": [
+    "all JVM system properties",
+    "unstructured system-out/system-err"
+  ],
+  "missing_evidence": [
+    "per-step event timestamps",
+    "force-killed JVM pid and exit status",
+    "raw before/after database snapshots",
+    "execution-time source fingerprints",
+    "end-to-end runner duration"
+  ],
+  "process_logs": [
+    {
+      "file": "processes/start-03f21b5c-6035-464c-bbe2-3b39dbf1a235.log",
+      "original_modified_utc": "2026-11-12T08:52:39.883466+00:00",
+      "bytes": 0
+    },
+    {
+      "file": "processes/resume-7fd90248-17a6-449a-a32b-efe1084dc628.log",
+      "original_modified_utc": "2026-11-12T08:52:43.114291+00:00",
+      "bytes": 57
+    },
+    {
+      "file": "processes/start-15fd720a-f434-4673-a75a-d70aac48df92.log",
+      "original_modified_utc": "2026-11-12T08:52:46.583975+00:00",
+      "bytes": 68
+    },
+    {
+      "file": "processes/resume-659a218c-03a3-4417-aad0-f6891efaba3a.log",
+      "original_modified_utc": "2026-11-12T08:52:47.792387+00:00",
+      "bytes": 57
+    },
+    {
+      "file": "processes/start-a62a4018-dfb1-4cb3-92eb-543d6effce86.log",
+      "original_modified_utc": "2026-11-12T08:52:50.027318+00:00",
+      "bytes": 49
+    },
+    {
+      "file": "processes/resume-2424e74f-af10-4c5c-936f-740fcb01a0e6.log",
+      "original_modified_utc": "2026-11-12T08:52:51.680421+00:00",
+      "bytes": 57
+    },
+    {
+      "file": "processes/start-650f9a26-415f-4bd3-a401-d72e49b627a5.log",
+      "original_modified_utc": "2026-11-12T09:04:00.922156+00:00",
+      "bytes": 0
+    },
+    {
+      "file": "processes/resume-6d9d1561-4496-4b56-8f5a-808c039345ee.log",
+      "original_modified_utc": "2026-11-12T09:04:04.604463+00:00",
+      "bytes": 57
+    },
+    {
+      "file": "processes/start-a0d4166c-ac6e-4bed-bb1e-9ea453590e11.log",
+      "original_modified_utc": "2026-11-12T09:04:07.289101+00:00",
+      "bytes": 68
+    },
+    {
+      "file": "processes/resume-ee2e8949-1545-4d0a-8c63-927d86d58fb6.log",
+      "original_modified_utc": "2026-11-12T09:04:08.621743+00:00",
+      "bytes": 57
+    },
+    {
+      "file": "processes/start-bcb313d0-ec38-459b-89a8-8d367726632a.log",
+      "original_modified_utc": "2026-11-12T09:04:10.306221+00:00",
+      "bytes": 49
+    },
+    {
+      "file": "processes/resume-5f00dbf1-830f-49ae-8fe8-96a1a548fb29.log",
+      "original_modified_utc": "2026-11-12T09:04:12.118584+00:00",
+      "bytes": 57
+    }
+  ],
+  "archive_time_sources": [
+    {
+      "path": "pom.xml",
+      "sha256": "8f3162b267af5e6805366c718e9346ec2181be6927c0ef3317aa8b51a9f59651"
+    },
+    {
+      "path": "src/main/resources/db/schema.sql",
+      "sha256": "1bb823beda8d73088080a5ec7ad14047d5e93f9b60db17d225ddafdf36898a63"
+    },
+    {
+      "path": "scripts/verify_run_contract.py",
+      "sha256": "599be7b1344864950a1b20ab724284c5212219376186b3ca40dd52d681ef560b"
+    },
+    {
+      "path": "src/test/java/com/cexpilot/platform/run/BusinessRunMySqlIT.java",
+      "sha256": "2de745304c5132a5b51114d8678808690bfd1943783171fa926fcca8c419839b"
+    },
+    {
+      "path": "src/test/java/com/cexpilot/platform/run/BusinessRunAdapterTest.java",
+      "sha256": "2fffd5c3b03bc90387e56330687ac0f36195bd2139944cbaff841a02d9e812c8"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/agent/AgentDefinition.java",
+      "sha256": "a5715f4d27cf183820383dadf988fe7b557be4c6637cc3daf324350b72b04795"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/agent/AgentDefinitionLoader.java",
+      "sha256": "3cf87f4295bc597ffcc8595c42eff18cbbc20afd4ec3134a20d24dbaadf13372"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/agent/AgentDispatcher.java",
+      "sha256": "4372fcd9891eca8743ef8f515e67b540161986f2b5a90582aae43a084e1a57a3"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/agent/AgentExecutionRequest.java",
+      "sha256": "185ec8d20dfbed11e159303da7938e047e37e41e3fe54f6286c6c566c3b8e4cf"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/agent/AgentInput.java",
+      "sha256": "47d3f0f0dffefe8dbb07b33685db860e0b5ebfb8317434180d80b2197221da74"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/agent/AgentOutput.java",
+      "sha256": "30be13a2bda84bed3c82ecf953ea9f894b48fbe1f6f8dd9d8e01d23ab5864fdd"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/agent/AgentRegistrationPolicy.java",
+      "sha256": "9df11f8661673c0a0014832348dcb45065e404828377dd6018f958aaa7c12f1e"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/agent/AgentRegistry.java",
+      "sha256": "82356b8626caff3e61d981732df2642467f557692bc6abfefbc48b9d9cac68b6"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/agent/AgentRunContext.java",
+      "sha256": "21342f1083675c054068b7b77677601cca621323e21319339229480fa4cbd6aa"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/agent/ClarificationField.java",
+      "sha256": "3c89719f0161a0753618326776e335df9ea742e246d9cfe3b3749ed9f9bf54fb"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/agent/ConfiguredAgentDefinition.java",
+      "sha256": "032d4bf4c7d7fceb31b5adb2c6c7253f887c76d137d7299f25ad1de70b905d3a"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/agent/ConfiguredAgentFactory.java",
+      "sha256": "ff21a6e677ec0ffcb30c0073743635f83c1bdde98a4c5162ae2bbdf939fb6771"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/agent/ConversationAgent.java",
+      "sha256": "fb96e93098812d5e78450f194cb137d3a1814cbd4a8a376e4bed2b911e2245a9"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/agent/DeclaredAgent.java",
+      "sha256": "881f7c8240a7fddc1dc683f2b18af67b40da15da2a5e632ee5624475991e7da1"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/agent/EngineKind.java",
+      "sha256": "5bb8841c65926905d3731da9d76e15e7aeeb4ce23827ef2663ded947bc131323"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/agent/IntentRouter.java",
+      "sha256": "d05ade1b0cd0b1b5bf8f819dc3f41470a8fe9fff3c66fc971cc180cedd4d1c70"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/agent/ToolBoundAgent.java",
+      "sha256": "e2e14bc09656272cad10d0a759e76f66f2430c538c0b2ba61cc0eaa5f50ee66a"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/context/AgentContextProvider.java",
+      "sha256": "abccddec39bbf62f79722aab37b47803aa2201ceab3ca870aedccf3d89dbf195"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/context/BasicAgentContextProvider.java",
+      "sha256": "82f6d6f9f229c6da96aa6a4050717bc523d509762977d52685061bbdd5a41dfd"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/context/DispatchLifecycle.java",
+      "sha256": "254b17ed5445ae389f31daea035c0efc7713181daf32356fca13144efa1b3d42"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/context/RoutingDialect.java",
+      "sha256": "be8a9df354d9e66404c3425943214f4152f104cc6792c763065eae586e72c8f3"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/engine/dag/DagConfig.java",
+      "sha256": "1f431d7dd6553190d2c5c74cef5b8c3b855fe6d6107403b5cb55e969b71a6fbd"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/engine/dag/DagContext.java",
+      "sha256": "08fb9f60c76a357a584f423f8bd9fb66c3fe17ac274bea8e8bb5b18fc1f6511a"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/engine/dag/DagExecutor.java",
+      "sha256": "a2b97652829ba2f6bf3f13c932d31a8b5a1d7c93e97b9af7c9099b0593b10cce"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/engine/dag/DagPlan.java",
+      "sha256": "e185dc45d49c341a85c39d32d6ebfa9c74031b6bf1ee71f27f77651b17d243f9"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/engine/dag/NodeBindings.java",
+      "sha256": "2ed1278504a8365847a95e453222d93f08e99d48cbc3b0ccd96c81009935891a"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/engine/dag/NodeExecutionSupport.java",
+      "sha256": "0c7ba9d024b7ec846953da4d8ecab3d297eac2e43b893e9f29a9a0c5aa05bba0"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/engine/dag/NodeOperation.java",
+      "sha256": "6d711bef97fef9042ba71378c058952ce956f503ee9759484a451aa6ed828cfe"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/engine/dag/PlanNode.java",
+      "sha256": "c1f68fc3c96bed2598d37db8e91a0d3ec244793e46dfe04f1f52a3fad89146be"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/engine/dag/PlanValidator.java",
+      "sha256": "ff49fa1044ad5607e8f31064c1e84383d82093afaee155ebc0e47cfedda162e7"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/engine/dag/ReferenceResolver.java",
+      "sha256": "d5de61ca146fc5185b1755fca3b3aa7b6b16f6345789c31c86411bcfb548c331"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/engine/plan/DeclarativePlanHooks.java",
+      "sha256": "af2ba552ce85c693416e1326ca2567efb70da91bdf91f5cf62759db88312c54b"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/engine/plan/PlanDrivenAgent.java",
+      "sha256": "2dd7e776aa8b7dd40758759a7c21d4e22a966f0619247d18ec096f44e24bb149"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/engine/plan/PlanEngine.java",
+      "sha256": "6c203fc3259868fdf2e6e98289d52d0f28f67591e0a5aa6c00c8b85215883c01"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/engine/plan/PlanHooks.java",
+      "sha256": "c71f3fa98757306a97a6a453cccbc0f69e517083b740d7698338c0523a8cf376"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/engine/react/ReactEngine.java",
+      "sha256": "44145856b058015e340f6dc5401e040d0ad1c8a68c5fdfc927505faee1920242"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/evidence/EvidenceSession.java",
+      "sha256": "d4a5b2e18a05ccf68337574b3be28ac93f8ff3ce4c1df28b0f39812055215f18"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/evidence/ToolEvidenceCheckpoint.java",
+      "sha256": "2f29889dcf3aaed7072393d57dc66b18fc4ccd20c992a26fee5a7af197f95580"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/evidence/ToolEvidenceWriter.java",
+      "sha256": "80f0b44bec26725dd8a1218de191b36c01d2821cdcc196c6a26842341a10c682"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/execution/ExecutionFailure.java",
+      "sha256": "8306556a629003f48e47d5682cc1d4dbd8718c6cfc32bf78cf9e9d085b772626"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/execution/ExecutionResult.java",
+      "sha256": "e668c022fc2d7f5b6718eaac01372873e3e548d1a949c8a264b3ab3fbab002d7"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/execution/QueryBudget.java",
+      "sha256": "b077aa8a32d2ee1de3ab7bbfa2c3630175836c976cc4654370208af46d9be19f"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/execution/RequestContext.java",
+      "sha256": "c8c5baec459f7318e9c423b96c5dd9734d4538c61ec48daf44b5a60f245198c2"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/execution/TurnCounters.java",
+      "sha256": "cde7ea25df5f4069ed4edcb8aade0cd04e876c81ef8460480faba1db121bbd6f"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/execution/config/HarnessRolloutConfig.java",
+      "sha256": "7c91326555ab0230ade9529daf47f6b9846c983af84002d35d9ef06221fd9fe3"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/execution/config/QueryExecutionConfig.java",
+      "sha256": "59acf90768412e9078295f51882f4348e781660c7b0fb3430e677cc49f885038"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/llm/ChatMessage.java",
+      "sha256": "2ce2caf64ec54ef5382e94a0d535313f7cf32f12c1fb289a0389fa29dda08acb"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/llm/ChatResponse.java",
+      "sha256": "93d7a00061b29b9c5e435c7ff712aea555fa93a2b421009e516f00caaa636708"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/llm/LlmCallDiagnostics.java",
+      "sha256": "665f0328e0cc54220bdfd065e33f907d33e492be5d49597067f819165a0c0054"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/llm/LlmClient.java",
+      "sha256": "c5cbb3d1e383443c0cc87354f20dbfabec54ee9f5f18f44f0f3474ce53a269b5"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/llm/LlmConfig.java",
+      "sha256": "52c4bd1da1c17ae4dbd1d7b728168ce7ea9a25c593370bd5533a2399bca06d3a"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/llm/LlmException.java",
+      "sha256": "8ea54f1e8261dfa519e75b7e00ecc04345cf634c71ae0dd8ed4b89f989b00dd4"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/llm/LlmJson.java",
+      "sha256": "528c11311849cbcc7fd8b1f5b6fe1de6409c3c92221b81d8e2a1aadad86cb687"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/llm/LlmTraceSerializer.java",
+      "sha256": "8488df15c59b4b2502ecc8840d36a4a480a162f169658440385e25b084dd7090"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/llm/LlmUsage.java",
+      "sha256": "42818ab60aff496a2e64804a84a6c162f948e5dd0e7cb97895b1d1a0d8b89304"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/llm/ObservedConnectionManager.java",
+      "sha256": "09ee9a353153e89f1c4d3a5b2685a2308baf577027a9f703c2a25bc0bc121ada"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/llm/OpenAiCompatibleClient.java",
+      "sha256": "e81ce155f52e5ca1e79dc9c3ff3f8977f3e04eb16b680484940c23d271a2ef26"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/llm/PlanningJson.java",
+      "sha256": "33d5f708c84651b8c4dd45d6f59aa2f21bd70effd6c1cb0fe9967e7e6edef403"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/llm/PlanningLlm.java",
+      "sha256": "ee54f0b9f17d5d624bcb365e20c49a82b13c02ec7a44d2903e27a1305042e22e"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/llm/ToolCall.java",
+      "sha256": "cf397e24815ec32541b94560738e4f7df51d2c80576721fb2b4a090c0750420a"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/llm/ToolSpec.java",
+      "sha256": "cb50a0fcea4459966ca4c1788a6b091ab370902f07abaaddd11ab8408509b599"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/observability/HttpRequestCounter.java",
+      "sha256": "91652f75f607038a0b6a56f2b2bd37470510869278acc499f01744fe886c8dd0"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/observability/NodeTraceCollector.java",
+      "sha256": "a0a8277a509d8e75f4dd9ae44db3ac31ac34cb6546a19a1e5325f70b98ec5d7b"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/observability/TraceEvent.java",
+      "sha256": "a51d27a3b595db7a45edf54ffc77b6042c16e5840f38ba60367caee9f779829e"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/observability/TraceSink.java",
+      "sha256": "30f229db0508f2e815a8afcbbca18ea16304fb5e6347337dcdfadf37acd9bbdd"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/prompt/PromptStore.java",
+      "sha256": "39e7cdf358c8fee1965d847684d5cae5cceb62fab4c05dbc6bcd8f8d4337b095"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/run/AgentRunAdapter.java",
+      "sha256": "b8ada809c7e2d12cf6c923680e0b3f15d5b948d6946387634040a294e093bc9e"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/run/DeclaredAgentRunAdapter.java",
+      "sha256": "eeb9390d3fed5c629b1902d53d210e13f9a5aa07b4275b310f2653b35bbaf4ba"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/run/DurableStore.java",
+      "sha256": "52062cba13f1285c3888fa97445db11537de8a654bd76c5a6a6bbe2f2f2121e7"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/run/RunAdapterRegistry.java",
+      "sha256": "4117f331562675ae994510d3b79fd298dd58459ee928cd888b7212f777bb8fd5"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/run/RunCheckpoint.java",
+      "sha256": "8a3b928b0da5b86d766edb51cab107f9bf46e91d33a083178aeb9e0fa9964149"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/run/RunCompletion.java",
+      "sha256": "cea89a11540b1981e6001136386d1f83fb0b1fe3dd05fe30d31f7c1f3135b7f2"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/run/RunCompletionListener.java",
+      "sha256": "35eda8c43c7df3ab2f7140e8f19df8c522cad8d53aafe5707b8ed73b1fba64f2"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/run/RunCoordinator.java",
+      "sha256": "3423dc8405052bec9249b5e019997f0124b414d1fa81d0bf2b213b121d2c9608"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/run/RunReconciler.java",
+      "sha256": "0acda58929af79682f82b2cbfbcf3678ac27e8acd1e4a0b1fc5376a68a09142d"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/run/RunScope.java",
+      "sha256": "582c4cfc1dec7120e8b6e23ca0581e6abf916f326561199aaef2dccd6bc3a502"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/run/RunSegment.java",
+      "sha256": "df0ed2c841192e0a5ddada0ac9c24637db91571dbc6362b5132c33fabf334554"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/run/RunStep.java",
+      "sha256": "673c6ed8009c3dfa2e1a9afb51f8217d5878d84bb898f304814099db969fb4d3"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/run/RunSuspended.java",
+      "sha256": "4c32e94b98d3d591aa430757ae75d93de04d3b5ceae2992417d9c4cc5c86190a"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/tool/AgentTool.java",
+      "sha256": "845e5dcc53e4c82b79cf0de32f303f78aff9e590a9ea2b32822c43db147aa4f0"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/tool/AsyncAgentTool.java",
+      "sha256": "e405e079f8c56e6a874f29bb3a2b84050f837beeec82e287c4807e05be61238b"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/tool/HttpAgentTool.java",
+      "sha256": "ee74dff3abccf49b46b9145a73f0af05552614056f8ee8a24406bdfad781a528"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/tool/HttpToolDefinition.java",
+      "sha256": "2285a2c3498ecf019213a599c2a25a64ffe3e7af6b2bac2d9b9682715e13fd4f"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/tool/ToolArguments.java",
+      "sha256": "91f26f0331dcef412fcad8726865d605cc8554c56524ae7bbaf665ca61cf69fb"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/tool/ToolContext.java",
+      "sha256": "ec4ca7ee883c7420e3be21df5c6e78eb53e7537fa8c037e6628a492db34e4580"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/tool/ToolDefinition.java",
+      "sha256": "9c64c37eceb01081cfbe9a641c861c4283f661145c7cf1655e50bb291a8c9c31"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/tool/ToolDefinitionLoader.java",
+      "sha256": "b5dd1a654bb58a771b38ef0e3bd9630a0adea09ea80c3b4309689bf7e60e845c"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/tool/ToolExecution.java",
+      "sha256": "1fd7773aeb4faa4be19e57d58dc68cf34bb8f500210632c4ea6f2d7dedf880fd"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/tool/ToolOutputSchema.java",
+      "sha256": "45a3fef7d6b0879e19e335f08b77d972bd781be68c1650ae0b3a40123dd7b210"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/tool/ToolRegistry.java",
+      "sha256": "df54825ee90c99a409a522d5b104c0c503417aaa6d989320d3a4d9d193dc8dd4"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/tool/ToolResult.java",
+      "sha256": "900d7612b36d2dd017ac93ffb10a3adb39087d94cdf7e36459d33aea81e6dd18"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/tool/calculation/AnnualizeTool.java",
+      "sha256": "71a51defc0ac4f075455bb44671f3a439b066142f11ed1de9ac4d8891dd103b4"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/tool/calculation/AvgTool.java",
+      "sha256": "d8c31edc00dbdecc5c0b4755ef490b0286bda4cb00a522a7b0d0f5ad3ac296b9"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/tool/calculation/CalculationInputSchemas.java",
+      "sha256": "2c1b8ed53b8d6e2a9feb83e63e0baa48b26967588bd9e2161e87ba7b5d79a2a8"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/tool/calculation/CalculationTool.java",
+      "sha256": "565d56158fd27f07c34206596a458b627878df5433929f33185111579c479aeb"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/tool/calculation/CompareTool.java",
+      "sha256": "f190bcc9f07f285617532536949e96cb980140608cafabc87cb8a9bb8ea7fa0e"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/tool/calculation/DifferenceTool.java",
+      "sha256": "4c8268d60563774f0e1fe00ad0d5241761bae16e10fc3171bda27781e109ce47"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/tool/calculation/MaxTool.java",
+      "sha256": "71b3d0010064be2b2632dee38639e2eb3ce522530eb4b216f8034ec660dc6f91"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/tool/calculation/MinTool.java",
+      "sha256": "45e0bd540afda8bcec749651888303bd854d1bf2b16bdbd550ef010740e5ad89"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/tool/calculation/RatioTool.java",
+      "sha256": "abe7a67240895b28ae5cdffde4deb529a63309cf49827c03866453ff359e7b01"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/tool/calculation/RelativeChangeTool.java",
+      "sha256": "92fa57469c4b900d6c19164250c49e8ebf69792b4ad7ca2fe4be790829525b0e"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/tool/calculation/Series.java",
+      "sha256": "ace2587e7e69637c394f3eb5722b113135bee9a7716ba6031e3957f76585445f"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/tool/calculation/SumTool.java",
+      "sha256": "16cb7a00271ac5fc49a5959a02a51ad79c0b42938f30c4ed797ba2808268ca76"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/tool/config/HttpToolServices.java",
+      "sha256": "84cb54fce3f8125ccbbded97d9ee91dfe9885a226e5bc98f748c7961c778d044"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/tool/control/RegisteredAgentToolPolicy.java",
+      "sha256": "f0d8f33f613685816cbc8bc0a2b58a11fcea1a8838850e50b9250988557ef701"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/tool/control/ToolAccessPolicy.java",
+      "sha256": "60bc60b9c3b9da0ca9b047f5f2eb37d4cc49b7490fcf1d74e60cf4c2025b5f27"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/tool/control/ToolControl.java",
+      "sha256": "3ded90441be378adc0d5291fd5cb967e5fdcd6a466676adcc773133ce817f3a6"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/tool/control/ToolGateway.java",
+      "sha256": "05115fae0ddd462e7048219387dfa503776036b1c65bad878c42894adfeb17a6"
+    },
+    {
+      "path": "src/main/java/com/cexpilot/platform/tool/control/ToolResourceGuard.java",
+      "sha256": "16e6897801b6a4d7d3352a012ea4c30e7b6c2a523bdb4f48cb9be836e37bdf90"
+    },
+    {
+      "path": "src/test/java/com/cexpilot/platform/run/fixture/RunContractFixture.java",
+      "sha256": "3257dbf422ba8707e2507dc09a61e3a898475671f78c74c542b7a45d70e1b54d"
+    },
+    {
+      "path": "src/test/java/com/cexpilot/platform/run/fixture/RunContractService.java",
+      "sha256": "2a641f0bdee463ac40900e91c126144d2bec5d6d73b0ce8579ac6d6a55abdfa7"
+    },
+    {
+      "path": "src/test/java/com/cexpilot/platform/run/fixture/RunContractWorker.java",
+      "sha256": "1e227944e75b070db4ace95d2ceb7b8f875eb53085089f8e92aa2fa7ba8e83a3"
+    }
+  ]
+}

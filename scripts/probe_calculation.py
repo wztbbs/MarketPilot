@@ -179,7 +179,7 @@ def has_dirty_calc():
     try:
         import subprocess
         st = subprocess.run(["git", "-C", REPO_ROOT, "status", "--short",
-                             "src/main/java/com/cexpilot/calculation"],
+                             "src/main/java/com/cexpilot/platform/tool/calculation"],
                             capture_output=True, text=True, timeout=10)
         return bool(st.stdout.strip())
     except Exception:

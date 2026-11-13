@@ -1,6 +1,6 @@
 # 06 · 监控与告警业务语义
 
-学习目标：把“条件成立时通知我”翻译成用户能预测其行为的规则。本篇讲业务含义，Execution、Work、Checkpoint 等实现细节见 [主动监控设计](../docs/主动监控.md)。
+学习目标：把“条件成立时通知我”翻译成用户能预测其行为的规则。本篇讲业务含义，Execution、Work、Checkpoint 等实现细节见 [主动监控设计](../docs/cex/monitor/主动监控.md)。
 
 ## 1. 概念与业务机制
 
@@ -68,7 +68,7 @@ MATCH 表示有有效证据满足规则；NO_MATCH 表示有有效证据不满�
 
 ## 3. 易错点与理解边界
 
-当前能力核对日期：2026-10-27。依据为 [MonitorDefinitionCompiler](../src/main/java/com/cexpilot/monitor/MonitorDefinitionCompiler.java)、[MonitorPlanRunner](../src/main/java/com/cexpilot/monitor/MonitorPlanRunner.java)、[MonitorTriggerService](../src/main/java/com/cexpilot/monitor/MonitorTriggerService.java) 及工程设计文档。
+当前能力核对日期：2026-10-27。依据为 [MonitorDefinitionCompiler](../src/main/java/com/cexpilot/business/cex/monitor/MonitorDefinitionCompiler.java)、[MonitorPlanRunner](../src/main/java/com/cexpilot/business/cex/monitor/MonitorPlanRunner.java)、[MonitorTriggerService](../src/main/java/com/cexpilot/business/cex/monitor/MonitorTriggerService.java) 及工程设计文档。
 
 当前是同所同品种、1～2 个条件固定 AND；每 5 分钟检查；滚动窗口 5～1440 分钟且为 5 分钟倍数；时间指标固定 5m；连续次数 1～12。OR、自定义检查频率、暂停恢复及运行中自然语言改规则等尚未接入。用户粘贴材料中的“Monitor V2”不能替代这些当前实现事实。
 

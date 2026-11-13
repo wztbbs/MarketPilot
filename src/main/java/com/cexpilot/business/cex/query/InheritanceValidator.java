@@ -1,0 +1,268 @@
+package com.cexpilot.business.cex.query;
+
+import com.cexpilot.business.cex.conversation.QueryDefinition;
+import com.cexpilot.business.cex.metric.CompiledPlan;
+import com.cexpilot.business.cex.metric.EffectiveTarget;
+import com.cexpilot.platform.execution.RequestContext;
+import com.cexpilot.business.cex.time.TimeRange;
+import com.cexpilot.business.cex.time.TimeRangeResolver;
+import com.cexpilot.business.cex.time.TimeSpecParser;
+import com.fasterxml.jackson.databind.JsonNode;
+
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.util.List;
+import java.util.Set;
+import java.util.TreeSet;
+
+/** 所选版本查询定义与本轮编译条件的差异审计。NEW 没有继承基准。
+ * 当前主链通过 auditChanges 记录 QUERY_DIFF，不因模型漏报 changes 而拒绝合法查询。
+ */
+public final class InheritanceValidator {
+
+    /** 与 DagRuntime 默认用户时区口径一致。 */
+    private static final ZoneId DEFAULT_ZONE = ZoneOffset.ofHours(8);
+
+    private final TimeRangeResolver timeResolver = new TimeRangeResolver(Clock.systemUTC());
+
+    /**
+     * @return 对账失败的修复文案；一致、无活动 definition 或 definition 无 targets 时返回 null
+     */
+    public String check(QueryDefinition definition, CompiledPlan plan, Set<String> declaredChanges, RequestContext requestContext) {
+        if (definition == null || definition.targets().isEmpty() || requestContext == null) {
+            return null;
+        }
+        Set<String> actualChanges = diffKeys(definition, plan, requestContext);
+        Set<String> missing = new TreeSet<>(actualChanges);
+        missing.removeAll(declaredChanges);
+        if (missing.isEmpty()) {
+            return null;
+        }
+        return "changes 声明与计划不一致：相对活动查询状态，计划实际变化了 " + missing
+                + " 但未在 changes 中声明。若这是用户本轮明确修改的条件，在输出 JSON 的顶层加入 "
+                + "\"changes\":" + missing + " 后重新输出完整 JSON；"
+                + "否则把上述条件恢复为与活动查询状态一致的值";
+    }
+
+    /** Program audit: removing a same-exchange branch is not an exchange change. */
+    Set<String> auditChanges(QueryDefinition definition, CompiledPlan plan, RequestContext context) {
+        if (definition == null || definition.targets().isEmpty() || context == null) return Set.of();
+        var changes = new TreeSet<>(diffKeys(definition,plan,context));
+        if (definition.targets().size() != plan.targets().size()) {
+            changes.add("targets");
+            for (String field : List.of("exchange","base","metric")) {
+                java.util.function.Function<EffectiveTarget,String> key = switch(field) {
+                    case "exchange" -> EffectiveTarget::exchange;
+                    case "base" -> InheritanceValidator::baseOf;
+                    default -> EffectiveTarget::metric;
+                };
+                if (definition.targets().stream().map(key).collect(java.util.stream.Collectors.toSet())
+                        .equals(plan.targets().stream().map(key).collect(java.util.stream.Collectors.toSet()))) changes.remove(field);
+            }
+        }
+        return changes;
+    }
+
+    /**
+     * definition vs 本轮计划的实际变化条件键集合（R10 配对对账）：
+     * 先按目标节点配对（未变条件优先，再按同所同币种 > 同所 > 同币种匹配），再逐对比较节点内条件；
+     * 配不上任何 definition 目标的计划目标视为新增、未被认领的 definition 目标视为删除，其
+     * exchange/base/metric 均计入变化。此前按字段集合比较，"币安BTC+OKX ETH → 币安ETH+OKX BTC"
+     * 这类配对互换两侧集合完全相同，会漏检。
+     */
+    Set<String> diffKeys(QueryDefinition definition, CompiledPlan plan, RequestContext requestContext) {
+        List<EffectiveTarget> from = new java.util.ArrayList<>(definition.targets());
+        List<EffectiveTarget> to = plan.targets();
+        List<EffectiveTarget> matches = matchTargets(from, to);
+        for (EffectiveTarget match : matches) if (match != null) from.remove(match);
+        Set<String> changed = new TreeSet<>();
+        for (int i = 0; i < to.size(); i++) {
+            EffectiveTarget planTarget = to.get(i);
+            EffectiveTarget match = matches.get(i);
+            if (match == null) {
+                // 同身份重复组豁免：配不上的目标若与某个已配对目标的查询身份逐字段全等，
+                // 是同一查询的取数模式差异（pinned 旧快照 + latest 新取数的"比刚才涨了多少"
+                // 新旧对比对），不是用户条件变化——glm/deepseek-v4.1/deepseek-0731 三模型
+                // 在该场景全部被误判漏报 changes，每次白烧 57~127s 修复轮（trace 实证）。
+                // 条件不同的真新增对象不受豁免，照旧打回。
+                if (hasMatchedSameIdentity(planTarget, to, matches, i)) {
+                    continue;
+                }
+                changed.add("exchange");
+                changed.add("base");
+                changed.add("metric");
+                continue;
+            }
+            comparePair(changed, "exchange", match.exchange(), planTarget.exchange());
+            comparePair(changed, "base", baseOf(match), baseOf(planTarget));
+            comparePair(changed, "market_type", match.instrument().path("market_type").asText(),
+                    planTarget.instrument().path("market_type").asText());
+            comparePair(changed, "quote", match.instrument().path("quote").asText(),
+                    planTarget.instrument().path("quote").asText());
+            comparePair(changed, "metric", match.metric(), planTarget.metric());
+            comparePair(changed, "shape", match.queryShape(), planTarget.queryShape());
+            comparePair(changed, "interval", intervalOf(match), intervalOf(planTarget));
+            comparePair(changed, "include_unclosed",
+                    String.valueOf(match.includeUnclosed()), String.valueOf(planTarget.includeUnclosed()));
+            comparePair(changed, "count", String.valueOf(match.count()), String.valueOf(planTarget.count()));
+            comparePair(changed, "depth", String.valueOf(match.depth()), String.valueOf(planTarget.depth()));
+            if (timeChanged(definition, match, planTarget, requestContext)) changed.add("time");
+        }
+        if (!from.isEmpty()) { changed.add("exchange"); changed.add("base"); changed.add("metric"); }
+        return changed;
+    }
+
+    /** 来源继承与实际 diff 共用同一套目标配对，不按单独字段集合猜测来源对象。 */
+    static List<EffectiveTarget> matchTargets(List<EffectiveTarget> previous, List<EffectiveTarget> to) {
+        List<EffectiveTarget> from = new java.util.ArrayList<>(previous);
+        boolean singlePair = to.size() == 1 && from.size() == 1;
+        // 先认领完全未变的目标，避免前面的变化节点抢走后面的正确配对。
+        EffectiveTarget[] matches = new EffectiveTarget[to.size()];
+        for (int i = 0; i < to.size(); i++) {
+            EffectiveTarget planTarget = to.get(i);
+            EffectiveTarget exact = from.stream().filter(t -> sameConditions(t, planTarget))
+                    .findFirst().orElse(null);
+            if (exact != null) {
+                matches[i] = exact;
+                from.remove(exact);
+            }
+        }
+        for (int i = 0; i < to.size(); i++) {
+            if (matches[i] == null) {
+                matches[i] = popMatch(from, to.get(i), singlePair);
+            }
+        }
+        return java.util.Arrays.asList(matches);
+    }
+
+    /**
+     * 配对并从待配列表认领：同所同币种 > 同所（任意币种，R10——配对互换时把变化暴露成 base 漏报，
+     * 同币优先会把互换吸收成 exchange 单键变化，模型声明 exchange 即可蒙混）> 同币种 >
+     * 双边各只有一个目标时直接配对。
+     */
+    private static EffectiveTarget popMatch(List<EffectiveTarget> remaining, EffectiveTarget planTarget,
+                                            boolean singlePair) {
+        EffectiveTarget match = null;
+        int best = 0;
+        for (EffectiveTarget candidate : remaining) {
+            boolean sameExchange = candidate.exchange().equals(planTarget.exchange());
+            boolean sameBase = baseOf(candidate).equals(baseOf(planTarget));
+            int rank = sameExchange && sameBase ? 300 : sameExchange ? 200 : sameBase ? 100 : 0;
+            if (rank == 0) {
+                continue;
+            }
+            // 同所同币的多个指标，优先匹配相同指标/形态，再用条件消除同指标歧义。
+            if (candidate.instrument().path("market_type").equals(planTarget.instrument().path("market_type"))) rank += 50;
+            if (candidate.metric().equals(planTarget.metric())) rank += 30;
+            if (candidate.queryShape().equals(planTarget.queryShape())) rank += 10;
+            if (java.util.Objects.equals(candidate.timeExpression(), planTarget.timeExpression())) rank += 5;
+            if (java.util.Objects.equals(candidate.interval(), planTarget.interval())) rank += 2;
+            if (rank > best) {
+                match = candidate;
+                best = rank;
+            }
+        }
+        if (match == null && singlePair && remaining.size() == 1) {
+            match = remaining.get(0);
+        }
+        if (match != null) {
+            remaining.remove(match);
+        }
+        return match;
+    }
+
+    private static void comparePair(Set<String> changed, String key, String from, String to) {
+        if (!java.util.Objects.equals(from, to)) {
+            changed.add(key);
+        }
+    }
+
+    /**
+     * 未配对目标是否存在"已配对成功的同身份目标"：exchange/instrument/metric/形态/时间/
+     * interval/includeUnclosed/count/depth 逐字段全等（sameConditions 口径）。
+     * reference_mode（pinned/latest）不在 EffectiveTarget 上，豁免按纯查询身份判定——
+     * 同身份的重复组无论取数模式如何都不构成条件漂移。
+     */
+    private static boolean hasMatchedSameIdentity(EffectiveTarget planTarget, List<EffectiveTarget> to,
+                                                  List<EffectiveTarget> matches, int self) {
+        for (int j = 0; j < to.size(); j++) {
+            if (j == self || matches.get(j) == null) {
+                continue;
+            }
+            if (sameConditions(planTarget, to.get(j))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String baseOf(EffectiveTarget target) {
+        return target.instrument().path("base").asText();
+    }
+
+    private static String intervalOf(EffectiveTarget target) {
+        return target.interval() == null ? "AUTO" : target.interval();
+    }
+
+    /**
+     * 时间比较按消解后的绝对区间比（Planner 可能返回等价的 calendar_period 或 absolute_range），
+     * 不是 JSON 逐字比。滚动窗口（recent 6h 这类）时长相同视为同一条件延续——集合随"现在"滚动，
+     * 跨轮消解必然得到不同区间，不能算用户修改。
+     */
+    boolean timeChanged(QueryDefinition definition, EffectiveTarget from, EffectiveTarget to,
+                                RequestContext requestContext) {
+        return timeChanged(definition, from, to, requestContext, false);
+    }
+
+    /** 来源必须有可证明的等价条件；消解失败不能当成继承成立。 */
+    boolean sameTimeRequirement(QueryDefinition definition, EffectiveTarget from, EffectiveTarget to, RequestContext context) {
+        return !timeChanged(definition, from, to, context, true);
+    }
+
+    private boolean timeChanged(QueryDefinition definition, EffectiveTarget from, EffectiveTarget to,
+                                RequestContext requestContext, boolean changedOnFailure) {
+        JsonNode definitionTime = from.timeExpression();
+        JsonNode planTime = to.timeExpression();
+        if (definitionTime == null || planTime == null) {
+            return !java.util.Objects.equals(definitionTime, planTime);
+        }
+        if (definitionTime.equals(planTime) || sameRollingWindow(definitionTime, planTime)) {
+            return false;
+        }
+        try {
+            TimeRange definitionRange = timeResolver.resolve(definitionZone(definition),
+                    TimeSpecParser.parse(definitionTime), Instant.parse(definition.requestTime()));
+            TimeRange planRange = timeResolver.resolve(
+                    requestContext.userZone() != null ? requestContext.userZone() : DEFAULT_ZONE,
+                    TimeSpecParser.parse(planTime), requestContext.requestTime());
+            return !definitionRange.startInclusive().equals(planRange.startInclusive())
+                    || !definitionRange.endExclusive().equals(planRange.endExclusive());
+        } catch (Exception e) {
+            // 无法消解时保持现有策略，由执行期时间校验处理。
+            return changedOnFailure;
+        }
+    }
+
+    private static boolean sameConditions(EffectiveTarget a, EffectiveTarget b) {
+        return a.exchange().equals(b.exchange()) && a.instrument().equals(b.instrument())
+                && a.metric().equals(b.metric()) && a.queryShape().equals(b.queryShape())
+                && java.util.Objects.equals(a.timeExpression(), b.timeExpression())
+                && java.util.Objects.equals(a.interval(), b.interval())
+                && java.util.Objects.equals(a.includeUnclosed(), b.includeUnclosed())
+                && java.util.Objects.equals(a.count(), b.count())
+                && java.util.Objects.equals(a.depth(), b.depth());
+    }
+
+    private static boolean sameRollingWindow(JsonNode a, JsonNode b) {
+        return "rolling_window".equals(a.path("type").asText())
+                && "rolling_window".equals(b.path("type").asText())
+                && a.path("duration").equals(b.path("duration"));
+    }
+
+    private static ZoneId definitionZone(QueryDefinition definition) {
+        return definition.timezone() != null ? ZoneId.of(definition.timezone()) : DEFAULT_ZONE;
+    }
+
+}

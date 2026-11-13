@@ -227,6 +227,7 @@
 </div>
 <script src="/home-shell.js"></script>
 <script src="/monitor-confirmation.js"></script>
+<script src="/agent-run.js"></script>
 <script src="/clarification-form.js"></script>
 <script>
 (function () {
@@ -316,6 +317,14 @@
       onSubmit: function (question, answers) { return send(question, answers); }
     });
     if (form) clarificationForms.push(form);
+  }
+
+  function renderAgentRun(div, planning, turnId) {
+    if (!window.AgentRun) return;
+    window.AgentRun.render(div, planning, function (result, sourceTurnId) {
+      renderClarification(div, result.agentPayload && result.agentPayload.clarify, sourceTurnId || turnId);
+      refreshClarifications();
+    });
   }
 
   function autoResize() {
@@ -410,6 +419,7 @@
         appendMeta(answerDiv, payload.toolCalls, payload.durationMs, payload.traceId);
         renderClarification(answerDiv, payload.clarify, payload.turnId);
         if (window.MonitorConfirmation) window.MonitorConfirmation.render(answerDiv,payload.planning);
+        renderAgentRun(answerDiv,payload.planning,payload.turnId);
       } else if (name === 'error') {
         terminalReceived = true;
         // meta 只是请求开始；只有 done 或已提交失败的 error 才能推进父轮次。
@@ -525,6 +535,7 @@
             appendMeta(div, 0, 0, m.traceId);
             renderClarification(div, m.clarify, m.turnId);
             if (window.MonitorConfirmation) window.MonitorConfirmation.render(div,m.planning);
+            renderAgentRun(div,m.planning,m.turnId);
           }
         });
       })

@@ -1,0 +1,13 @@
+id: demo_plan
+route: demo_plan
+description: 仅当用户明确指定“Demo plan”时，演示模拟工单的方案审批、同步或异步执行；不处理行情或真实监控。
+enabled: true
+engine: plan
+tool_approval: prepared_plan
+prompt: demo_ticket
+allowed_tools: [demo.ticket.create, demo.ticket.create_async, demo.ticket.assign]
+execution:
+  max_steps: 8
+  max_model_calls: 12
+  max_tool_calls: 8
+  timeout_ms: 180000

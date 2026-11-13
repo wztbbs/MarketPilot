@@ -1,0 +1,45 @@
+{
+  "name": "demo.ticket.create_async",
+  "enabled": true,
+  "description": "异步创建模拟工单（可重启恢复）",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "title"
+    ],
+    "properties": {
+      "title": {
+        "type": "string",
+        "pattern": "^[\\s\\S]{1,200}$"
+      }
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "ticket_id",
+      "version",
+      "title"
+    ],
+    "properties": {
+      "ticket_id": {
+        "type": "string"
+      },
+      "version": {
+        "type": "integer"
+      },
+      "title": {
+        "type": "string"
+      }
+    }
+  },
+  "control": {
+    "kind": "OPERATION",
+    "confirmation_required": true,
+    "summary": "异步创建模拟工单",
+    "idempotent": true,
+    "expires_after_seconds": 86400
+  }
+}

@@ -1,0 +1,100 @@
+package com.cexpilot.business.cex.market.kline;
+
+import com.cexpilot.business.cex.market.Exchange;
+import com.cexpilot.business.cex.market.model.Candle;
+import com.cexpilot.business.cex.market.series.SeriesCoverageValidator;
+import com.cexpilot.business.cex.market.series.CandleIntervalSelector;
+import com.cexpilot.business.cex.market.series.SeriesQueryPolicy;
+import com.cexpilot.business.cex.market.series.SeriesValidation;
+import com.cexpilot.business.cex.market.series.TimePoint;
+import com.cexpilot.business.cex.time.CandleInterval;
+import com.cexpilot.business.cex.time.TimeRange;
+import com.cexpilot.business.cex.time.TimeRangeResolver;
+import com.cexpilot.business.cex.time.TimeSpec;
+import org.springframework.stereotype.Service;
+
+import java.time.Instant;
+import java.time.ZoneId;
+import java.util.EnumMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+/**
+ * 组织整个 K 线查询流程：消解时间 → 选择数据源 → 查询前检查 →
+ * 分页拉取 → 覆盖核对。各组件完成自己的工作，这里只做编排。
+ */
+@Service
+public class KlineQueryService {
+
+    private final Map<Exchange, KlineSource> sources;
+    private final TimeRangeResolver timeRangeResolver;
+
+    public KlineQueryService(List<KlineSource> sources, TimeRangeResolver timeRangeResolver) {
+        Map<Exchange, KlineSource> map = new EnumMap<>(Exchange.class);
+        for (KlineSource source : sources) {
+            map.put(source.exchange(), source);
+        }
+        this.sources = map;
+        this.timeRangeResolver = timeRangeResolver;
+    }
+
+    /**
+     * @param userZone    请求上下文时区；spec 自带 timezone 时优先
+     * @param spec        LLM 解析出的时间表达
+     * @param requestTime 本次请求固定的时间基准，时间消解与未收盘判定共用
+     * @param interval 显式粒度；null 时根据解析后的区间和数据源预算自动选择
+     */
+    public KlineQueryResult query(ZoneId userZone, TimeSpec spec, Instant requestTime,
+                                  Exchange exchange, String base,
+                                  CandleInterval interval, boolean includeUnclosed) {
+        return query(userZone, spec, requestTime, exchange, base,
+                com.cexpilot.business.cex.market.MarketType.PERPETUAL, interval, includeUnclosed);
+    }
+
+    public KlineQueryResult query(ZoneId userZone, TimeSpec spec, Instant requestTime,
+                                  Exchange exchange, String base, com.cexpilot.business.cex.market.MarketType market,
+                                  CandleInterval interval, boolean includeUnclosed) {
+        TimeRange range = timeRangeResolver.resolve(userZone, spec, requestTime);
+        KlineSource source = sources.get(exchange);
+        if (source == null) {
+            throw new IllegalArgumentException("交易所暂无 K 线数据源: " + exchange.displayName());
+        }
+
+        interval = CandleIntervalSelector.select(interval, range, source.capability(market));
+        KlineQueryRequest requested = new KlineQueryRequest(
+                exchange, base, interval, range, includeUnclosed, market);
+        TimeRange effectiveRange = SeriesQueryPolicy.check(
+                interval, range, source.capability(market), exchange.displayName(), requestTime);
+        KlineQueryRequest effective = new KlineQueryRequest(
+                exchange, base, interval, effectiveRange, includeUnclosed, market);
+
+        KlineSource.FetchResult fetch = source.fetch(effective);
+        List<TimePoint> points = fetch.candles().stream()
+                .map(c -> new TimePoint(c.openTime(), c.confirmed()))
+                .toList();
+        SeriesValidation validation = SeriesCoverageValidator.validate(
+                SeriesCoverageValidator.PointSemantics.PERIOD,
+                interval.duration().toMillis(),
+                effectiveRange.startInclusive().toEpochMilli(),
+                effectiveRange.endExclusive().toEpochMilli(),
+                includeUnclosed, points, fetch.abortReason(), requestTime,
+                // 外扩只是网格对齐的技术产物；beyond-now 以用户请求终点为准，
+                // 否则 to_request_time（终点=请求时刻）会永远被判为部分覆盖
+                Math.min(effectiveRange.endExclusive().toEpochMilli(),
+                        range.endExclusive().toEpochMilli()));
+
+        Set<Long> acceptedTimes = new HashSet<>();
+        for (TimePoint point : validation.points()) {
+            acceptedTimes.add(point.ms());
+        }
+        List<Candle> accepted = fetch.candles().stream()
+                .filter(c -> acceptedTimes.contains(c.openTime()))
+                .toList();
+        if (accepted.isEmpty()) {
+            throw new IllegalArgumentException("未获取到K线数据");
+        }
+        return new KlineQueryResult(requested, effective, accepted, validation.coverage());
+    }
+}

@@ -1,0 +1,173 @@
+package com.cexpilot.business.cex.conversation;
+
+import com.cexpilot.business.cex.configuration.ConversationConfig;
+import org.junit.jupiter.api.Test;
+
+import java.time.Instant;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+class ConversationServiceTest {
+
+    private final ConversationRepository repository = mock(ConversationRepository.class);
+    private final ConversationService service = new ConversationService(repository, new ConversationConfig());
+
+    @Test void monitorClarificationKeepsHandoffSourceAcrossTurnsAndFencingPreventsOverwrite() {
+        var mapper=new com.fasterxml.jackson.databind.ObjectMapper();
+        var initial=mapper.createObjectNode(); initial.putObject("monitor_context");
+        when(repository.routingState("c")).thenReturn(initial);
+        when(repository.ownsTurnForUpdate("c","t1",1)).thenReturn(true);
+        var payload=mapper.createObjectNode().put("status","NEEDS_CLARIFICATION");
+        payload.putObject("handoff").put("source_task_id","source").put("source_task_version",3);
+        service.finishRoutedTurn("c",new ConversationService.TurnHandle(1,"t1",1),"监控它","NEEDS_CLARIFICATION","什么阈值？",
+                "trace",null,mapper.createArrayNode(),null,Instant.now(),java.time.ZoneOffset.UTC,"什么阈值？","monitor",payload);
+        var saved=org.mockito.ArgumentCaptor.forClass(com.fasterxml.jackson.databind.JsonNode.class);
+        verify(repository).saveRoutingState(eq("c"),eq(1L),eq("monitor"),saved.capture());
+        assertEquals("source",saved.getValue().at("/handoff/source_task_id").asText());
+        var previous=mapper.createObjectNode(); previous.set("monitor_context",saved.getValue());
+        when(repository.routingState("c")).thenReturn(previous);
+        when(repository.ownsTurnForUpdate("c","t2",2)).thenReturn(true);
+        service.finishRoutedTurn("c",new ConversationService.TurnHandle(2,"t2",2),"跌2%","SUCCEEDED","草稿",
+                "trace2",null,mapper.createArrayNode(),null,Instant.now(),java.time.ZoneOffset.UTC,null,"monitor",
+                mapper.createObjectNode().put("status","PENDING_CONFIRMATION"));
+        var next=org.mockito.ArgumentCaptor.forClass(com.fasterxml.jackson.databind.JsonNode.class);
+        verify(repository).saveRoutingState(eq("c"),eq(2L),eq("monitor"),next.capture());
+        assertEquals(saved.getValue().path("handoff"),next.getValue().path("handoff"));
+        service.finishRoutedTurn("c",new ConversationService.TurnHandle(3,"stale",1),"旧轮次","FAILED","失败",
+                "trace3",null,mapper.createArrayNode(),null,Instant.now(),java.time.ZoneOffset.UTC,null,"monitor",payload);
+        verify(repository,never()).saveRoutingState(eq("c"),eq(1L),eq("monitor"),eq(next.getValue()));
+        verify(repository,org.mockito.Mockito.times(2)).saveRoutingState(any(),anyLong(),eq("monitor"),any());
+        verify(repository,never()).saveTaskVersion(any());
+    }
+
+    @Test
+    void 访客已有会话时复用最近会话() {
+        when(repository.findLatestByVisitorId("v1")).thenReturn("conv-existing");
+        when(repository.conversationExists("conv-existing")).thenReturn(true);
+        when(repository.ownedBy("conv-existing", "v1")).thenReturn(true);
+
+        String id = service.getOrCreateConversation(null, "BTC 多少钱", "v1");
+
+        assertEquals("conv-existing", id);
+        verify(repository, never()).createConversation(anyString(), any(), any());
+    }
+
+    @Test
+    void 访客无会话时新建并绑定访客() {
+        when(repository.findLatestByVisitorId("v1")).thenReturn(null);
+        when(repository.conversationExists(anyString())).thenReturn(false);
+
+        String id = service.getOrCreateConversation(null, "BTC 多少钱", "v1");
+
+        assertTrue(id != null && !id.isBlank());
+        verify(repository).createConversation(eq(id), any(), eq("v1"));
+    }
+
+    @Test
+    void 显式传入会话id时不查访客会话() {
+        when(repository.conversationExists("conv-given")).thenReturn(true);
+        when(repository.ownedBy("conv-given", "v1")).thenReturn(true);
+
+        String id = service.getOrCreateConversation("conv-given", "BTC 多少钱", "v1");
+
+        assertEquals("conv-given", id);
+        verify(repository, never()).findLatestByVisitorId(anyString());
+    }
+
+    @Test
+    void 无访客标识时直接新建会话() {
+        when(repository.conversationExists(anyString())).thenReturn(false);
+
+        String id = service.getOrCreateConversation(null, "BTC 多少钱", null);
+
+        assertTrue(id != null && !id.isBlank());
+        verify(repository, never()).findLatestByVisitorId(anyString());
+        verify(repository).createConversation(eq(id), any(), eq(null));
+    }
+
+    @Test
+    void 历史查询对空会话返回空表() {
+        assertTrue(service.history(null).isEmpty());
+        assertTrue(service.history("  ").isEmpty());
+    }
+
+    private static final Instant T0 = Instant.parse("2026-10-12T00:00:00Z");
+
+    @Test
+    void 登记轮次成功时写入RUNNING行并返回句柄() {
+        when(repository.latestCompletedTurnId("c1")).thenReturn("parent-1");
+        when(repository.acquireTurn(eq("c1"), anyString(), anyLong()))
+                .thenAnswer(inv -> new ConversationRepository.ConversationStateRow(3, inv.getArgument(1), 7));
+
+        ConversationService.TurnHandle turn = service.beginTurn("c1", "BTC 多少钱", "parent-1", T0);
+
+        assertNotNull(turn);
+        assertEquals(3, turn.queryNo()); // last_query_no=3 就是本轮已分配的序号
+        assertEquals(7, turn.fencingToken());
+        // started_at 用应用时钟（requestTime）写入，不依赖 DB 的 NOW()，避免服务器/会话时区错位
+        verify(repository).insertRunningTurn(eq("c1"), eq(3L), eq(turn.turnId()), eq("parent-1"),
+                eq("BTC 多少钱"), eq(T0));
+    }
+
+    @Test
+    void 陈旧或其他会话的父轮次被拒绝且不登记查询() {
+        when(repository.acquireTurn(eq("c1"), anyString(), anyLong()))
+                .thenAnswer(inv -> new ConversationRepository.ConversationStateRow(3, inv.getArgument(1), 7));
+        when(repository.latestCompletedTurnId("c1")).thenReturn("eth-turn");
+        for (String parent : new String[]{"btc-turn", "another-conversation-turn", ""}) {
+            var error = org.junit.jupiter.api.Assertions.assertThrows(StaleContextException.class,
+                    () -> service.beginTurn("c1", "它现在呢", parent, T0));
+            assertEquals("CONTEXT_CONFLICT", error.response().get("code"));
+            assertEquals("eth-turn", error.response().get("currentParentTurnId"));
+        }
+        verify(repository, never()).insertRunningTurn(anyString(), anyLong(), anyString(), any(), anyString(), any());
+    }
+
+    @Test
+    void 首次页面空父轮次在无历史时可登记而旧客户端省略时兼容() {
+        when(repository.acquireTurn(eq("c1"), anyString(), anyLong()))
+                .thenAnswer(inv -> new ConversationRepository.ConversationStateRow(1, inv.getArgument(1), 1));
+        assertNotNull(service.beginTurn("c1", "BTC", "", T0));
+        assertNotNull(service.beginTurn("c1", "BTC", null, T0));
+        verify(repository, org.mockito.Mockito.times(1)).latestCompletedTurnId("c1");
+    }
+
+    @Test
+    void 父轮次冲突由事务代理回滚占用与计数() {
+        var manager = mock(org.springframework.transaction.PlatformTransactionManager.class);
+        var status = new org.springframework.transaction.support.SimpleTransactionStatus();
+        when(manager.getTransaction(any())).thenReturn(status);
+        var proxy = new org.springframework.aop.framework.ProxyFactory(service);
+        proxy.addAdvice(new org.springframework.transaction.interceptor.TransactionInterceptor(manager,
+                new org.springframework.transaction.annotation.AnnotationTransactionAttributeSource()));
+        var transactional = (ConversationService) proxy.getProxy();
+        when(repository.acquireTurn(eq("c1"), anyString(), anyLong()))
+                .thenAnswer(inv -> new ConversationRepository.ConversationStateRow(3, inv.getArgument(1), 7));
+        when(repository.latestCompletedTurnId("c1")).thenReturn("new-turn");
+        org.junit.jupiter.api.Assertions.assertThrows(StaleContextException.class,
+                () -> transactional.beginTurn("c1", "它现在呢", "old-turn", T0));
+        verify(manager).rollback(status);
+        verify(manager, never()).commit(any());
+        verify(repository, never()).insertRunningTurn(anyString(), anyLong(), anyString(), any(), anyString(), any());
+    }
+
+    @Test
+    void 会话已有执行中轮次时登记返回忙碌() {
+        when(repository.acquireTurn(eq("c1"), anyString(), anyLong()))
+                .thenReturn(new ConversationRepository.ConversationStateRow(4, "other-turn", 7));
+
+        assertNull(service.beginTurn("c1", "BTC 多少钱", null, T0));
+        verify(repository, never()).insertRunningTurn(anyString(), anyLong(), anyString(), any(), anyString(), any());
+    }
+}

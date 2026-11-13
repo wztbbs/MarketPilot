@@ -3,7 +3,7 @@
 
 python3 scripts/replay_trace.py <traceId>       # key: LLM_NORMAL_API_KEY
 python3 scripts/replay_trace.py <traceId> --dry-run
-详见 docs/提示词离线重放.md。仅 Python 标准库，无 import 时网络请求。
+详见 docs/cex/testing/提示词离线重放.md。仅 Python 标准库，无 import 时网络请求。
 """
 from __future__ import annotations
 

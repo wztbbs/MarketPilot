@@ -1,0 +1,236 @@
+[
+  {
+    "name": "com.cexpilot.business.cex.monitor.MonitorRunMigrationTest",
+    "tests": "2",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "0.584",
+    "reportModifiedAt": "2026-11-12T10:46:25.007528+00:00"
+  },
+  {
+    "name": "com.cexpilot.business.cex.query.QueryRunMigrationTest",
+    "tests": "8",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "1.142",
+    "reportModifiedAt": "2026-11-12T10:46:37.181862+00:00"
+  },
+  {
+    "name": "com.cexpilot.business.cex.monitor.MonitorApplicationContextTest",
+    "tests": "6",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "2.801",
+    "reportModifiedAt": "2026-11-12T10:46:27.869039+00:00"
+  },
+  {
+    "name": "com.cexpilot.business.cex.monitor.MonitorAgentTest",
+    "tests": "3",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "0.055",
+    "reportModifiedAt": "2026-11-12T10:46:25.065135+00:00"
+  },
+  {
+    "name": "com.cexpilot.business.cex.monitor.MonitorConversationFlowTest",
+    "tests": "10",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "0.339",
+    "reportModifiedAt": "2026-11-12T10:46:28.214160+00:00"
+  },
+  {
+    "name": "com.cexpilot.business.cex.query.MonitorPlanExecutionTest",
+    "tests": "9",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "0.224",
+    "reportModifiedAt": "2026-11-12T10:46:31.192450+00:00"
+  },
+  {
+    "name": "com.cexpilot.business.cex.query.MonitorCheckpointTest",
+    "tests": "4",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "0.117",
+    "reportModifiedAt": "2026-11-12T10:46:37.297878+00:00"
+  },
+  {
+    "name": "com.cexpilot.business.cex.monitor.MonitorWorkManagerTest",
+    "tests": "4",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "0.215",
+    "reportModifiedAt": "2026-11-12T10:46:28.428380+00:00"
+  },
+  {
+    "name": "com.cexpilot.business.cex.query.DagRuntimeTest",
+    "tests": "25",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "1.663",
+    "reportModifiedAt": "2026-11-12T10:46:30.969701+00:00"
+  },
+  {
+    "name": "com.cexpilot.business.cex.query.DagPlannerTest",
+    "tests": "82",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "2.234",
+    "reportModifiedAt": "2026-11-12T10:46:33.452785+00:00"
+  },
+  {
+    "name": "com.cexpilot.business.cex.query.QueryIterationTest",
+    "tests": "27",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "2.604",
+    "reportModifiedAt": "2026-11-12T10:46:36.039432+00:00"
+  },
+  {
+    "name": "com.cexpilot.business.cex.query.AgentPlanningTest",
+    "tests": "27",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "0.671",
+    "reportModifiedAt": "2026-11-12T10:46:37.970331+00:00"
+  },
+  {
+    "name": "com.cexpilot.platform.engine.dag.DagExecutorTest",
+    "tests": "7",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "1.428",
+    "reportModifiedAt": "2026-11-12T10:46:23.476781+00:00"
+  },
+  {
+    "name": "com.cexpilot.platform.execution.QueryBudgetTest",
+    "tests": "5",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "0.119",
+    "reportModifiedAt": "2026-11-12T10:46:18.247564+00:00"
+  },
+  {
+    "name": "com.cexpilot.platform.run.DurableExecutionTest",
+    "tests": "12",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "1.688",
+    "reportModifiedAt": "2026-11-12T10:46:22.016000+00:00"
+  },
+  {
+    "name": "com.cexpilot.platform.run.BusinessRunAdapterTest",
+    "tests": "3",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "2.069",
+    "reportModifiedAt": "2026-11-12T10:46:20.324863+00:00"
+  },
+  {
+    "name": "com.cexpilot.platform.run.RunOwnershipTest",
+    "tests": "1",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "0.029",
+    "reportModifiedAt": "2026-11-12T10:46:22.045370+00:00"
+  },
+  {
+    "name": "com.cexpilot.platform.tool.ToolRegistryTest",
+    "tests": "6",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "0.93",
+    "reportModifiedAt": "2026-11-12T10:46:24.407660+00:00"
+  },
+  {
+    "name": "com.cexpilot.platform.tool.ToolControlDefinitionTest",
+    "tests": "2",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "0.01",
+    "reportModifiedAt": "2026-11-12T10:46:24.420611+00:00"
+  },
+  {
+    "name": "com.cexpilot.business.cex.evidence.EvidenceStoreTest",
+    "tests": "6",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "0.019",
+    "reportModifiedAt": "2026-11-12T10:46:28.449324+00:00"
+  },
+  {
+    "name": "com.cexpilot.business.cex.api.RoutedAskServiceTest",
+    "tests": "6",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "0.668",
+    "reportModifiedAt": "2026-11-12T10:46:29.119446+00:00"
+  },
+  {
+    "name": "com.cexpilot.business.cex.api.AskServiceTest",
+    "tests": "17",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "0.181",
+    "reportModifiedAt": "2026-11-12T10:46:29.303225+00:00"
+  },
+  {
+    "name": "com.cexpilot.business.cex.conversation.RoutedConversationTest",
+    "tests": "5",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "0.19",
+    "reportModifiedAt": "2026-11-12T10:46:38.159914+00:00"
+  },
+  {
+    "name": "com.cexpilot.business.cex.conversation.TaskRepositoryTest",
+    "tests": "6",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "0.144",
+    "reportModifiedAt": "2026-11-12T10:46:38.305025+00:00"
+  },
+  {
+    "name": "com.cexpilot.platform.architecture.PlatformBoundaryTest",
+    "tests": "2",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "0.39",
+    "reportModifiedAt": "2026-11-12T10:46:18.127778+00:00"
+  },
+  {
+    "name": "com.cexpilot.platform.architecture.PlatformAgentIsolationTest",
+    "tests": "2",
+    "failures": "0",
+    "errors": "0",
+    "skipped": "0",
+    "time": "0.957",
+    "reportModifiedAt": "2026-11-12T10:46:17.753044+00:00"
+  }
+]

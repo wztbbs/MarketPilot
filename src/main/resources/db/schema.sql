@@ -1,4 +1,8 @@
--- CEXPilot Phase 1 表结构（MySQL 8，幂等，可重复执行）
+-- CEXPilot 当前完整表结构（MySQL 8，建表语句幂等，可重复执行）
+-- 新库基线：已汇总 migrations/001～022 的最终 DDL，另包含 platform_* 运行表。
+-- CREATE TABLE IF NOT EXISTS 只创建缺失表，不会给存量表补列、改默认值或增删索引。
+-- 存量库仍需按已应用版本执行后续迁移；不要在已按本文件建好的新库上重放历史迁移。
+-- 维护约定：新增 DDL 迁移时同步更新本文件；被后续迁移替代或删除的结构不保留。
 -- 设计约定：用于过滤/关联的字段一律是普通列；异构 payload 才放 JSON 列。
 
 CREATE TABLE IF NOT EXISTS conversation (
@@ -333,4 +337,56 @@ CREATE TABLE IF NOT EXISTS monitor_execution (
     KEY idx_execution_dispatch (status, scheduled_at),
     KEY idx_execution_rule (rule_id, status, scheduled_at),
     KEY idx_execution_cleanup (finished_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 底座运行：身份与调度索引为列，执行检查点为 JSON 文本。
+CREATE TABLE IF NOT EXISTS platform_run (
+    id VARCHAR(64) NOT NULL PRIMARY KEY,
+    owner_id VARCHAR(64) NOT NULL,
+    run_id VARCHAR(64) NULL,
+    status VARCHAR(32) NOT NULL,
+    revision BIGINT NOT NULL DEFAULT 0,
+    fencing_token BIGINT NOT NULL DEFAULT 0,
+    next_attempt_at DATETIME(6) NULL,
+    lease_until DATETIME(6) NULL,
+    payload_text MEDIUMTEXT NOT NULL,
+    KEY idx_platform_run_due (next_attempt_at, lease_until),
+    KEY idx_platform_run_owner (owner_id, run_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 底座工具调用：身份与调度索引为列，执行检查点为 JSON 文本。
+CREATE TABLE IF NOT EXISTS platform_tool_call (
+    id VARCHAR(64) NOT NULL PRIMARY KEY,
+    owner_id VARCHAR(64) NOT NULL,
+    run_id VARCHAR(64) NULL,
+    status VARCHAR(32) NOT NULL,
+    revision BIGINT NOT NULL DEFAULT 0,
+    fencing_token BIGINT NOT NULL DEFAULT 0,
+    next_attempt_at DATETIME(6) NULL,
+    lease_until DATETIME(6) NULL,
+    payload_text MEDIUMTEXT NOT NULL,
+    KEY idx_platform_tool_call_due (next_attempt_at, lease_until),
+    KEY idx_platform_tool_call_owner (owner_id, run_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS platform_run_checkpoint (
+    run_id VARCHAR(64) NOT NULL,
+    checkpoint_key VARCHAR(160) NOT NULL,
+    payload_text MEDIUMTEXT NOT NULL,
+    PRIMARY KEY (run_id, checkpoint_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 底座审批方案：审批状态独立于 payload 中的执行状态，方案内容和指纹不可原地修改。
+CREATE TABLE IF NOT EXISTS platform_prepared_plan (
+    id VARCHAR(64) NOT NULL PRIMARY KEY,
+    owner_id VARCHAR(64) NOT NULL,
+    run_id VARCHAR(64) NOT NULL,
+    status VARCHAR(32) NOT NULL,
+    revision BIGINT NOT NULL DEFAULT 0,
+    fencing_token BIGINT NOT NULL DEFAULT 0,
+    next_attempt_at DATETIME(6) NULL,
+    lease_until DATETIME(6) NULL,
+    payload_text MEDIUMTEXT NOT NULL,
+    KEY idx_platform_prepared_plan_due (next_attempt_at, lease_until),
+    KEY idx_platform_prepared_plan_owner (owner_id, run_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

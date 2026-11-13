@@ -4,40 +4,31 @@ MarketPilot 是面向加密货币行情查询的 AI Copilot。用户用自然语
 
 项目仓库：[wztbbs/MarketPilot](https://github.com/wztbbs/MarketPilot)。
 
-本文及 `docs/` 描述当前工作树的实现。`importants/` 保存文章、设计过程和实验产物；其中的历史计划、能力表和示例不作为当前接口契约。
+本文及 `docs/` 的现行专题描述当前工作树；`docs/archive/` 与各验证记录保留历史状态。`importants/` 保存文章、设计过程和实验产物；其中的历史计划、能力表和示例不作为当前接口契约。
 
 项目更名后，现有 Java 包名 `com.cexpilot`、Maven artifactId `cexpilot`、数据库名、环境变量和 Cookie 等技术标识继续沿用，文档中的命令及源码链接与当前实现保持一致。线上地址仍为 [cex.hrscrm.net](https://cex.hrscrm.net/)。
 
 ## 文档入口
 
-建议先读当前架构总览，再按 Query 执行反馈、HTTP 接入或监控生命周期阅读；Plan、上下文、时间与计算按需查阅。
+从 [文档导航](docs/README.md) 进入。文档已按底座与 CEX 业务归类，过时设计单独归档。
 
-| 文档 | 内容 |
+| 入口 | 内容 |
 | --- | --- |
-| [当前架构](docs/当前架构.md) | 共享底座、内置 Agent、声明式 Agent、领域服务与三条执行路径的整体关系 |
-| [HTTP 工具与声明式 Agent 接入](docs/HTTP工具与声明式Agent接入.md) | 阶段 3：受控 HTTP Adapter、YAML 定义、权限、契约、身份与本地验证 |
-| [交接、灰度与验收](docs/交接灰度与验收.md) | 阶段 4：分析转监控的条件交接、稳定灰度、回退与验收范围 |
-| [CEX 领域知识学习](domain/README.md) | 7 篇业务入门文档与 42 个思考 Case，覆盖产品、价格时间、衍生品、盘口、分析、监控及跨所口径 |
-| [查询执行反馈](docs/查询执行反馈.md) | 阶段 2：结果驱动的有界后续规划、累积计划与请求预算 |
-| [共享 Harness 与 Agent 边界](docs/共享Harness与Agent边界.md) | 阶段 1：Agent 注册、运行契约、Query / Monitor 状态归属与兼容范围 |
-| [Harness设计](docs/Harness设计.md) | 核心概念、完整链路、围栏强度、上下文与失败处理、验证方法及当前缺口 |
-| [Plan与指标元数据](docs/Plan与指标元数据.md) | 指标目录、查询形态、逻辑计划、物理绑定、引用契约、校验与扩展步骤 |
-| [上下文管理](docs/上下文管理.md) | 任务与版本、查询定义、澄清接续、历史事实、Planner 协议、跨轮执行绑定、存储与当前边界 |
-| [时间窗口](docs/时间窗口.md) | TimeSpec、固定请求时间、时区、网格对齐、分页、覆盖核对与实际统计范围 |
-| [聚合指标](docs/聚合指标.md) | 成品指标与计算节点、九个算子、输入输出、精度、来源传播和年化限制 |
-| [Trace搭建](docs/trace搭建.md) | Trace 生命周期、表结构、事件负载、版本指纹、回放接口与定位步骤 |
-| [主动监控](docs/主动监控.md) | 受控试用的规则确认、Execution 排期、Work 调度与恢复、Resend 邮件/模拟投递、只读巡检与部署迁移 |
-| [路由与监控规划](docs/路由与监控规划.md) | Plan 前独立路由、原 Query 链、Monitor 候选协议、上下文隔离与迁移 |
+| [当前架构](docs/当前架构.md) | 单体内的包边界、持久化运行、两类业务 Agent 与状态归属 |
+| [底座文档](docs/platform/README.md) | Agent 接入、引擎、工具控制、人工确认和等待恢复 |
+| [CEX 业务文档](docs/cex/README.md) | Query、Monitor、行情、页面、排查与测试 |
+| [CEX 领域知识学习](domain/README.md) | 产品、价格时间、衍生品、盘口、分析、监控与跨所口径 |
+| [历史设计](docs/archive/README.md) | 早期 Harness 和已停用协议；不作为当前契约 |
 
-大模型评测暂未单独展开。
+底座故障验证与 CEX 迁移测试分别保存在各自目录，阅读记录时核对日期、被测对象和覆盖范围。
 
 ## 共享底座与 Agent
 
-当前在同一 Spring Boot 服务中运行共享 Harness：AgentRegistry 注册内置 Market Analysis、Monitor，以及采用受控 YAML 定义的普通 Agent。底座共用 LLM、Context、Evidence、Trace、预算与工具契约；Query 走指标 DAG 和有界反馈，Monitor 保留确认与长期任务，声明式 Agent 通过白名单调用固定服务的只读 HTTP API。整体图与职责见 [当前架构](docs/当前架构.md)。
+当前在同一 Spring Boot 服务中运行共享 Harness：AgentRegistry 注册内置 Market Analysis、Monitor，以及采用受控 YAML 定义的普通 Agent。底座共用 LLM、Context、Evidence、Trace、预算与工具契约；Query 走指标 DAG 和有界反馈，Monitor 保留确认与长期任务，声明式 Agent 经统一入口执行白名单工具，支持确定参数确认，以及 ReAct / Plan 的持久化等待、异步查单和恢复。Monitor／Query 对话运行也已通过业务适配器接入持久化 Run；Query 保留自驱动规划，Monitor 后台排期与通知仍归业务。整体图与职责见 [当前架构](docs/当前架构.md)。
 
 普通 Agent 的标准接入可只增加 YAML、Prompt、Schema 和远程服务，不新增专用 Java Tool 类；新增指标或执行生命周期仍需相应实现。示例位于 `examples/http-agent/`，默认不加载，不代表已提供新的线上行情或洞察能力。
 
-查询后的监控追问可显式交接条件摘要，并保留源查询版本；Monitor 仍生成原待确认卡片。Query 后续规划、声明式 HTTP Agent 和显式交接支持按访客稳定灰度与配置回退，详见[交接、灰度与验收](docs/交接灰度与验收.md)。
+查询后的监控追问可显式交接条件摘要，并保留源查询版本；Monitor 仍生成原待确认卡片。Query 后续规划、声明式 HTTP Agent 和显式交接支持按访客稳定灰度与配置回退，详见[交接、灰度与验收](docs/cex/交接灰度与验收.md)。
 
 ## 当前支持范围
 
@@ -64,37 +55,29 @@ MarketPilot 是面向加密货币行情查询的 AI Copilot。用户用自然语
 - “币安 BTC 昨天 1 小时 K 线收盘价的等权平均是多少？”
 - “币安 BTC 最近 10 期已结算资金费率的均值是多少？”
 
-Query 默认走单次 DAG；当首轮模型选择 `execution_mode=adaptive` 时，可根据执行结果有界追加查询或计算。已有节点复用，不重复取数；全部执行结束后统一回答。协议、预算与验证边界见 [查询执行反馈](docs/查询执行反馈.md)。
+Query 默认走单次 DAG；当首轮模型选择 `execution_mode=adaptive` 时，可根据执行结果有界追加查询或计算。已有节点复用，不重复取数；全部执行结束后统一回答。协议、预算与验证边界见 [查询执行反馈](docs/cex/query/查询执行反馈.md)。
 
 ## 一次问答如何执行
 
 ```mermaid
 flowchart TD
-    Q[POST /api/ask 或 /api/ask/stream] --> S[AskService：固定请求时间、建立 Trace]
-    M[指标目录 + 算子契约] --> P[DagPlanner：领域判断与逻辑规划]
-    S --> REG[AgentRegistry：内置与 YAML 定义]
-    REG --> R0[IntentRouter：已注册 route / clarify]
-    R0 -->|声明式 Agent（engine: react）| HTTP[ReactEngine：底座受控工具决策循环]
-    R0 -->|query| P
-    R0 -->|monitor| MP[MonitorPlanner：独立提示词与候选校验]
-    MP --> MD[待确认规则卡片]
-    MD -->|用户明确确认版本、规则与邮箱| MC[启用后台检查与邮件]
-    R0 -->|clarify| RC[澄清路由，不执行]
-    P --> C[MetricPlanCompiler：绑定、展开交易所、推导依赖]
-    C --> V[PlanValidator：参数、引用、环、深度与预算]
-    C -->|编译错误，有限修复| P
-    V -->|校验错误，有限修复| P
-    V --> E[DagExecutor：拓扑分层，同层并行]
-    E --> R[MetricProvider → QueryService / Source / Client]
-    R --> F[标准指标事实 + 确定性计算结果]
-    E --> F
-    F --> MODE{single / adaptive}
-    MODE -->|single 或结束| A[Answer：FACTS + QUERY_STATUS + TIME_CONTEXT]
-    MODE -->|adaptive| OBS[观察结果：追加 / 结束 / 澄清]
-    OBS -->|追加计划| C
-    OBS -->|结束| A
-    OBS -->|澄清| D
-    P -->|无有效计划| D[直接返回范围、缺口或澄清说明]
+    A[POST ask／ask stream] --> S[AskService：访客／会话轮次／固定时间／Trace]
+    S --> D[AgentDispatcher：上下文扩展／Router]
+    D -->|clarify| C[路由澄清]
+    D --> R[RunCoordinator：冻结输入／持久化现场]
+    R --> Q[QueryRunAdapter → PlanEngine 自驱动端口]
+    Q --> QR[专用规划／编译校验／指标 DAG／证据回答]
+    R --> M[MonitorRunAdapter → PlanEngine＋Hooks]
+    M --> MT[ToolGateway → 未启用草稿／规则确认卡]
+    R --> DA[DeclaredAgentRunAdapter → React／Plan]
+    DA --> TG[ToolGateway：绑定／权限／参数确认／实际调用]
+    TG --> W[等待与推拉恢复]
+    W --> R
+    QR --> OUT[结果及私有输出]
+    MT --> OUT
+    DA --> OUT
+    OUT --> B[同步请求或恢复提交器：幂等提交原轮次和业务状态]
+    MT -->|用户明确确认| BG[Monitor 业务排期／固定 DAG／通知]
 ```
 
 正常查询通常依次调用 Router、Query Planner、Answer。Monitor 分支通常调用 Router 和独立 Monitor Planner，将候选保存为待确认草稿并展示规则，用户核对规则和通知邮箱、点击确认后才启用后台检查。规划校验失败会增加修复调用；没有有效查询计划时不调用 Answer。模型通过 JSON 文本生成计划，各阶段均不传 API `tools` 参数。原查询 LogicalPlan 协议不变，路由与监控规划协议见上方专题文档。
@@ -142,20 +125,20 @@ exchange:
     base-url: http://43.160.213.63:18081
 ```
 
-其他部署环境可以通过以下环境变量覆盖为可访问的代理或官方地址。监控业务不校验固定代理地址，连接异常在实际取数时报告。`application-test.yml` 固定上述代理地址，不使用这两个环境变量占位符：
+其他部署环境可以通过以下环境变量覆盖为符合仓库约定的可访问代理地址。监控业务不校验固定代理地址，连接异常在实际取数时报告。`application-test.yml` 固定上述代理地址，不使用这两个环境变量占位符：
 
 ```bash
 export BINANCE_BASE_URL='http://43.160.213.63:18080'
 export OKX_BASE_URL='http://43.160.213.63:18081'
 ```
 
-OKX 请求必须携带 `User-Agent`，否则可能收到 `403 error code: 1010`。当前 OkxClient 已统一设置该请求头。历史游标方向与分页细节见 [时间窗口](docs/时间窗口.md)。
+OKX 请求必须携带 `User-Agent`，否则可能收到 `403 error code: 1010`。当前 OkxClient 已统一设置该请求头。历史游标方向与分页细节见 [时间窗口](docs/cex/market/时间窗口.md)。
 
 新库启动时自动执行 [schema.sql](src/main/resources/db/schema.sql) 建表。**存量库不会自动升级字段**：`CREATE TABLE IF NOT EXISTS` 不执行 ALTER，也没有自动迁移框架；部署前需核对 [migrations](src/main/resources/db/migrations) 并手工执行尚未应用的迁移，不能把所有 ALTER 重复执行。
 
-已有 `next_query_no` 的库需应用 [010_last_query_no.sql](src/main/resources/db/migrations/010_last_query_no.sql)，将计数转换为 `last_query_no = next_query_no - 1`。先停止旧应用并等待在途问答结束，完成迁移后再启动新版本。新库直接使用 `last_query_no`，不执行这条迁移。
+当前 Query 任务模型使用 conversation_task／conversation_task_version，旧 frame 模型已由 [022_unified_task_model.sql](src/main/resources/db/migrations/022_unified_task_model.sql) 替换。旧任务不迁移兼容；旧库需按已应用版本及脚本前提停服、备份、升级，不能只执行早期 013 后启动当前代码。完整结构关系见[数据库说明](src/main/resources/db/README.md)。
 
-新增任务生命周期使用 [013_task_lifecycle.sql](src/main/resources/db/migrations/013_task_lifecycle.sql)：创建独立任务表并保存每轮版本。旧库先完成此前迁移，停旧应用后执行 013，再启动新版；新库无需执行迁移脚本。
+通用运行的 platform_run／platform_tool_call／platform_run_checkpoint 已在 schema.sql 中，当前没有独立编号迁移文件；启动初始化会创建缺失表，需确认对应权限和配置。已有表结构发生变化时仍需显式升级，不能依赖 CREATE TABLE IF NOT EXISTS。
 
 构建及运行 JAR：
 
@@ -166,7 +149,7 @@ java -jar target/cexpilot-0.1.0.jar --spring.profiles.active=test
 
 `prod` 使用 [application-prod.yml](src/main/resources/application-prod.yml) 的线上数据库配置，密码来自 `MYSQL_PASSWORD`；不要将本地 `DB_*` 变量误认为可以替换该 profile 的固定数据库地址。
 
-主动监控仅保留聊天确认入口 `/api/monitor-flow`，运维巡检为 `/api/monitor-health`。沿用已有数据库和模型配置时，模拟邮件部署只需新增 `MONITOR_ENABLED=true`、`RESEND_DRY_RUN=true`，以及巡检所需的 `MONITOR_ACCESS_TOKEN`（至少32字符）。收件邮箱由用户填写并确认，调度随应用启动，不需要额外cron。部署前按 [主动监控](docs/主动监控.md) 执行尚未应用的014～019迁移。
+主动监控仅保留聊天确认入口 `/api/monitor-flow`，运维巡检为 `/api/monitor-health`。沿用已有数据库和模型配置时，模拟邮件部署只需新增 `MONITOR_ENABLED=true`、`RESEND_DRY_RUN=true`，以及巡检所需的 `MONITOR_ACCESS_TOKEN`（至少32字符）。收件邮箱由用户填写并确认，调度随应用启动，不需要额外cron。014～019 是监控业务结构的演进记录；部署当前应用还需核对后续任务模型及底座运行表，见[完整数据库说明](src/main/resources/db/README.md)。
 
 ## 常用运行配置
 
@@ -187,13 +170,13 @@ java -jar target/cexpilot-0.1.0.jar --spring.profiles.active=test
 | `LLM_NORMAL_PRICE_INPUT_PER_1K` / `LLM_NORMAL_PRICE_OUTPUT_PER_1K` | 0 / 0 | 模型 1 成本估算单价 |
 | `LLM_FLAGSHIP_PRICE_INPUT_PER_1K` / `LLM_FLAGSHIP_PRICE_OUTPUT_PER_1K` | 0 / 0 | 模型 2 成本估算单价，独立于模型 1 |
 
-同一服务商时，设置 `LLM_FLAGSHIP_MODEL` 即可选择模型 2；地址和 Key 没有单独设置时继承 normal。模型名变量未设置时默认 qwen-max。不同服务商时同时设置第二套地址和 Key；两套模型都需支持当前配置的 JSON 输出格式。
+同一服务商时，设置 `LLM_FLAGSHIP_MODEL` 即可选择模型 2；地址和 Key 没有单独设置时继承 normal。LLM_FLAGSHIP_MODEL 未设置时默认 qwen-max；normal 默认值见上表。不同服务商时同时设置第二套地址和 Key；两套模型都需支持当前配置的 JSON 输出格式。
 
 只在规划解析/编译/校验实际进入修复循环时切换，正常澄清、出域、能力说明和 HTTP 超时/鉴权错误不会触发这个切换。Answer 始终使用 normal。每次 LLM_CALL 记录实际模型；总费用按各次调用对应模型单价汇总，缺失 usage 时为未知。两套默认单价为 0，不表示实际免费。
 
 配置和提示词随进程加载，不支持热更新；环境变量更改后重启生效，代码或提示词更改后重新构建并重启。
 
-Trace 单条接口保留完整 `events`，另提供 `planner_attempts`、`final_plan`、`final_compiled_plan`。每次尝试直接记录模型、调用状态、校验状态和失败原因；批量 `/api/traces` 也保留轻量 `planner_attempts`，便于比较模型 1 首次失败与模型 2 修复成功。页面只展示最终可执行 Plan；详情约定见 [上下文管理](docs/上下文管理.md)。
+Trace 单条接口保留完整 `events`，另提供 `planner_attempts`、`final_plan`、`final_compiled_plan`。每次尝试直接记录模型、调用状态、校验状态和失败原因；批量 `/api/traces` 也保留轻量 `planner_attempts`，便于比较模型 1 首次失败与模型 2 修复成功。页面只展示最终可执行 Plan；详情约定见 [上下文管理](docs/cex/query/上下文管理.md)。
 
 ## HTTP 接口
 
@@ -211,7 +194,7 @@ curl -N 'http://localhost:8082/api/ask/stream' \
 
 | 方法与路径 | 输入与输出 |
 | --- | --- |
-| `POST /api/ask` | 基本输入 `question`、可选 IANA `timezone`；返回 answer、evidence、traceId、conversationId、turnId、耗时与计数等，见 [AskResponse](src/main/java/com/cexpilot/api/AskResponse.java) |
+| `POST /api/ask` | 基本输入 `question`、可选 IANA `timezone`；返回 answer、evidence、traceId、conversationId、turnId、耗时与计数等，见 [AskResponse](src/main/java/com/cexpilot/business/cex/api/AskResponse.java) |
 | `POST /api/ask/stream` | 同类请求，SSE 事件为 meta、progress、delta、done、error；done 提供标识与统计，答案由 delta 累积 |
 | `GET /api/trace/{traceId}` | 返回主记录与按 seq 排序的完整事件 |
 | `GET /api/trace_detail/{traceId}` | 当前与单条 trace 接口读取相同完整数据，保留兼容路径 |
@@ -220,22 +203,22 @@ curl -N 'http://localhost:8082/api/ask/stream' \
 
 SSE 发起后即返回流，执行异常通过 `error` 事件传递，不能仅凭 HTTP 200 判断成功。前端入口为 [index.html](src/main/resources/static/index.html)，回放入口为 [trace.html](src/main/resources/static/trace.html)。
 
-线上入口：[cex.hrscrm.net](https://cex.hrscrm.net/)。定位问题先看 Trace 中的逻辑计划、绑定、取数与计算，再看最终答案，详见 [Trace搭建](docs/trace搭建.md)。
+线上入口：[cex.hrscrm.net](https://cex.hrscrm.net/)。定位问题先看 Trace 中的逻辑计划、绑定、取数与计算，再看最终答案，详见 [Trace搭建](docs/cex/operations/trace搭建.md)。
 
 ## 代码导航与开发检查
 
 | 目录 | 职责 |
 | --- | --- |
-| `api` | HTTP、SSE 与一次问答编排 |
-| `metric` | 指标目录、类型化查询、编译器、Provider、统一结果与来源传播 |
-| `dag` | 规划、校验、依赖引用、拓扑执行、事实回答 |
-| `time` | TimeSpec 与确定性时间区间消解 |
-| `market` | 查询策略、分页 Source、交易所 Client、统一模型与成品指标计算 |
-| `calculation` / `runtime` | 九个确定性算子、工具契约、执行结果与 Trace 抽象 |
-| `llm` / `prompt` | 兼容模型客户端、完整调用序列化与提示词加载 |
-| `trace` / `feedback` | 回放落库、查询与反馈 |
-| `conversation` / `evidence` | 结构化会话状态、澄清接续与历史事实引用，见上下文管理文档 |
-| `ethereum` / `eval` | 链上分析与评测代码；分别不在当前指标主链 / 暂不展开文档 |
+| `platform/agent`、`platform/context` | 公共 Agent、路由／分发与上下文扩展端口 |
+| `platform/engine` | 通用 ReAct、Plan、DAG 执行 |
+| `platform/run`、`platform/tool` | 持久化运行、恢复、工具契约、控制与通用计算 |
+| `platform/execution`、`llm`、`prompt`、`observability` | 执行结果／预算、模型与提示词、Trace 端口；所列目录均在 platform 下 |
+| `business/cex/query`、`monitor` | 专用查询状态机与运行适配；监控规则、周期执行和通知 |
+| `business/cex/metric`、`market`、`time` | 指标编译／Provider、行情查询与交易所、时间语义 |
+| `business/cex/conversation`、`evidence`、`context`、`handoff` | 业务任务／版本、事实、上下文与条件交接 |
+| `business/cex/api`、`trace`、`feedback` | 站点入口、Trace 存储／回放与反馈；所列目录均在 business/cex 下 |
+| `business/cex/ethereum`、`eval`、`mcp` | 既有链上分析、文件评测、行情 MCP 适配与 Server |
+| `bootstrap/configuration` | 基础设施装配 |
 
 按变更选择直接相关测试，先编译测试代码，再跑指定测试：
 

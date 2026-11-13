@@ -1,0 +1,158 @@
+package com.cexpilot.business.cex.api;
+
+import com.cexpilot.platform.agent.AgentDispatcher;
+import com.cexpilot.platform.agent.AgentExecutionRequest;
+import com.cexpilot.platform.llm.LlmConfig;
+import com.cexpilot.business.cex.conversation.PlanningContext;
+import com.cexpilot.business.cex.conversation.ConversationContextService;
+import com.cexpilot.business.cex.conversation.ConversationService;
+import com.cexpilot.business.cex.query.DagRuntime;
+import com.cexpilot.platform.llm.LlmUsage;
+import com.cexpilot.platform.execution.ExecutionResult;
+import com.cexpilot.business.cex.trace.TraceRepository;
+import com.cexpilot.business.cex.trace.DbTraceSink;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.*;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.boot.info.BuildProperties;
+import org.springframework.core.task.SyncTaskExecutor;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import java.time.*;
+import java.util.List;
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+
+class RoutedAskServiceTest {
+    final ObjectMapper json=new ObjectMapper();
+    final ConversationService conversation=mock(ConversationService.class);
+    final ConversationContextService context=mock(ConversationContextService.class);
+    final DagRuntime oldRuntime=mock(DagRuntime.class);
+    final AgentDispatcher dispatcher=mock(AgentDispatcher.class);
+    final TraceRepository traces=mock(TraceRepository.class);
+    final DbTraceSink sink=mock(DbTraceSink.class);
+    final ConversationService.TurnHandle turn=new ConversationService.TurnHandle(1,"turn",7);
+    AskService service;
+    @BeforeEach void setup() {
+        service=new AskService(conversation,context,oldRuntime,traces,sink,new LlmConfig(),Clock.fixed(Instant.parse("2026-10-27T06:00:00Z"),ZoneOffset.UTC),
+                mock(ObjectProvider.class),dispatcher);
+        when(conversation.getOrCreateConversation(any(),any(),any())).thenReturn("c");
+        when(conversation.beginTurn(any(),any(),any(),any())).thenReturn(turn);
+        when(conversation.renderRecentDialogue(any())).thenReturn("");
+        when(conversation.routingState(any())).thenReturn(json.createObjectNode());
+        when(context.buildPlanningContext(any())).thenReturn(new PlanningContext("",null));
+        when(conversation.finishRoutedTurn(any(),any(),any(),any(),any(),any(),any(),any(),any(),any(),any(),any(),any(),any()))
+                .thenReturn(new ConversationService.TaskCommit(false,null,0,null));
+    }
+    @Test void monitorPlanningResponseExposesCandidateWithoutCallingOldRuntimeOrQueryTaskCommit() {
+        var planning=json.createObjectNode().put("status","PLANNED").put("execution_status","NOT_CREATED");
+        planning.putObject("candidate").putObject("monitor").put("action","create");
+        var outcome=new ExecutionResult("候选计划已生成",json.createArrayNode(),0,0,10,5,"SUCCEEDED",null,0,1,0,0,0,0,List.of())
+                .withLlmUsages(List.of(new LlmUsage("normal","fake",10,5,0.0))).withAgent("monitor",planning)
+                .withRouterUsages(List.of(new LlmUsage("normal","fake",3,2,0.0)));
+        when(dispatcher.execute(any())).thenAnswer(inv->{
+            inv.getArgument(0,AgentExecutionRequest.class).selectedAgent().accept("monitor"); return outcome;
+        });
+        var response=service.ask(null,"监控BTC", "visitor");
+        assertEquals("monitor",response.type()); assertEquals(1,response.routerLlmCalls());
+        assertEquals("PLANNED",response.planning().path("status").asText());
+        assertEquals(0,response.toolCalls()); verifyNoInteractions(oldRuntime);
+        verify(conversation).finishRoutedTurn(eq("c"),eq(turn),eq("监控BTC"),eq("SUCCEEDED"),any(),any(),isNull(),any(),isNull(),any(),any(),isNull(),eq("monitor"),eq(planning));
+        verify(traces).saveRouting(anyString(),eq("monitor"),eq(1));
+        verify(conversation,never()).finishTaskTurn(any(),any(),any(),any(),any(),any(),any(),any(),any(),any(),any(),any());
+    }
+    @Test void monitorTransportFailureSavesMonitorFailureAndDoesNotPoisonQueryTask() {
+        when(dispatcher.execute(any())).thenAnswer(inv->{
+            inv.getArgument(0,AgentExecutionRequest.class).selectedAgent().accept("monitor");
+            throw new com.cexpilot.platform.execution.ExecutionFailure(new IllegalStateException("monitor timeout"),new com.cexpilot.platform.execution.TurnCounters(1,0,0,0,0,0,List.of())
+                    .withLlmUsages(List.of(new LlmUsage("normal","fake",null,null,null)))
+                    .withRouterUsages(List.of(new LlmUsage("normal","fake",3,2,0.0))));
+        });
+        assertThrows(com.cexpilot.platform.execution.ExecutionFailure.class,()->service.ask(null,"监控BTC","visitor"));
+        verify(traces).saveRouting(anyString(),eq("monitor"),eq(1));
+        verify(conversation).finishRoutedTurn(eq("c"),eq(turn),eq("监控BTC"),eq("FAILED"),isNull(),any(),isNull(),any(),any(),any(),any(),eq("monitor timeout"),eq("monitor"),isNull());
+        verifyNoInteractions(oldRuntime);
+    }
+    @Test void queryClarificationIsPersistedAndExposedInOrdinaryResponseAndHistory() throws Exception {
+        var payload=json.createObjectNode().put("status","NEEDS_CLARIFICATION");
+        payload.putArray("clarify").addObject().put("key","base").put("label","币种").put("type","text");
+        var result=new ExecutionResult("请补充币种",json.createArrayNode(),0,0,10,5,"NEEDS_CLARIFICATION","请补充币种",0,1,0,0,0,0,List.of())
+                .withAgent("query",payload);
+        when(dispatcher.execute(any())).thenAnswer(inv->{
+            inv.getArgument(0,AgentExecutionRequest.class).selectedAgent().accept("query"); return result;
+        });
+        var response=service.ask(null,"比较两所Funding","visitor");
+        assertEquals("base",response.clarify().get(0).key());
+        assertEquals("币种",json.readTree(json.writeValueAsString(response)).at("/clarify/0/label").asText());
+        verify(conversation).finishRoutedTurn(eq("c"),eq(turn),eq("比较两所Funding"),eq("NEEDS_CLARIFICATION"),
+                any(),any(),isNull(),any(),any(),any(),any(),eq("请补充币种"),eq("query"),eq(payload));
+        var message=new ConversationController.QueryMessage("比较两所Funding","请补充币种","trace",null,"turn","NEEDS_CLARIFICATION","query",payload);
+        assertEquals("base",json.readTree(json.writeValueAsString(message)).at("/clarify/0/key").asText());
+    }
+
+    @Test void querySseDoneIncludesClarificationFields() throws Exception {
+        var ask=mock(AskService.class);
+        var payload=json.createObjectNode().put("status","NEEDS_CLARIFICATION");
+        payload.putArray("clarify").addObject().put("key","base").put("label","币种").put("type","text").put("reason","confirm").put("message","您填写了两个币种，请确认一个").put("value","BTC和ETH");
+        var response=new AskResponse("c","trace","请补充币种",null,0,0,1,"turn",false,1,0,0,0,0,0,"query",payload,1);
+        when(ask.ask(any(),any(),any(),any(),any(),any(),any(),anyBoolean())).thenAnswer(inv->{
+            java.util.Map<String, com.fasterxml.jackson.databind.JsonNode> submitted = inv.getArgument(6);
+            assertEquals("BTC和ETH", submitted.get("base").asText());
+            AskService.AskStreamListener listener=inv.getArgument(5);
+            listener.onMeta("c","trace","turn"); listener.onDelta("请补充币种"); listener.onDone(response); return response;
+        });
+        var mvc=MockMvcBuilders.standaloneSetup(new AskController(ask,new SyncTaskExecutor())).build();
+        var pending=mvc.perform(post("/api/ask/stream").contentType("application/json").content("{\"question\":\"比较Funding\",\"parentTurnId\":\"parent\",\"clarificationAnswers\":{\"base\":\"BTC和ETH\"}}"))
+                .andExpect(request().asyncStarted()).andReturn();
+        var body=mvc.perform(asyncDispatch(pending)).andExpect(status().isOk()).andReturn().getResponse().getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+        assertTrue(body.contains("\"clarify\":[{\"key\":\"base\""));
+        assertTrue(body.contains("\"reason\":\"confirm\""));
+        assertTrue(body.contains("您填写了两个币种，请确认一个"));
+        assertTrue(body.contains("BTC和ETH"));
+    }
+
+    @Test void multiSelectArraysSurviveRequestSseAndHistory() throws Exception {
+        var ask=mock(AskService.class);
+        var payload=json.readTree("""
+                {"status":"NEEDS_CLARIFICATION","clarify":[{"key":"exchange","label":"交易所","type":"multiselect",
+                "reason":"confirm","message":"请选择两家交易所","options":["币安","OKX"],"minSelections":2,"maxSelections":2,"value":["币安","OKX"]}]}
+                """);
+        var response=new AskResponse("c","trace","请选择两家",null,0,0,1,"turn",false,1,0,0,0,0,0,"query",payload,1);
+        when(ask.ask(any(),any(),any(),any(),any(),any(),any(),anyBoolean())).thenAnswer(inv->{
+            java.util.Map<String, com.fasterxml.jackson.databind.JsonNode> submitted=inv.getArgument(6);
+            assertTrue(submitted.get("exchange").isArray());
+            assertEquals("OKX",submitted.get("exchange").get(1).asText());
+            AskService.AskStreamListener listener=inv.getArgument(5);listener.onDone(response);return response;
+        });
+        var mvc=MockMvcBuilders.standaloneSetup(new AskController(ask,new SyncTaskExecutor())).build();
+        var pending=mvc.perform(post("/api/ask/stream").contentType("application/json").content("""
+                {"question":"补充交易所","parentTurnId":"parent","clarificationAnswers":{"exchange":["币安","OKX"]}}
+                """)).andExpect(request().asyncStarted()).andReturn();
+        var body=mvc.perform(asyncDispatch(pending)).andExpect(status().isOk()).andReturn().getResponse()
+                .getContentAsString(java.nio.charset.StandardCharsets.UTF_8);
+        assertTrue(body.contains("\"value\":[\"币安\",\"OKX\"]"));
+        var history=new ConversationController.QueryMessage("比较两所","请选择两家","trace",null,"turn","NEEDS_CLARIFICATION","query",payload);
+        var historyJson=json.readTree(json.writeValueAsString(history));
+        assertTrue(historyJson.at("/clarify/0/value").isArray());
+        assertTrue(historyJson.at("/clarify/0/minSelections").isMissingNode());
+        assertTrue(historyJson.at("/clarify/0/type").isMissingNode());
+    }
+
+    @Test void sseDoneCarriesRouteAndPlanningPayload() throws Exception {
+        var ask=mock(AskService.class);
+        var planning=json.createObjectNode().put("status","PLANNED").put("execution_status","NOT_CREATED");
+        var response=new AskResponse("c","trace","仅规划",null,0,0,1,"turn",false,1,0,0,0,0,0,"monitor",planning,1);
+        when(ask.ask(any(),any(),any(),any(),any(),any(),any(),anyBoolean())).thenAnswer(inv->{
+            AskService.AskStreamListener listener=inv.getArgument(5);
+            listener.onMeta("c","trace","turn"); listener.onDelta("仅规划"); listener.onTurnFinished("turn"); listener.onDone(response);
+            return response;
+        });
+        var mvc=MockMvcBuilders.standaloneSetup(new AskController(ask,new SyncTaskExecutor())).build();
+        var pending=mvc.perform(post("/api/ask/stream").contentType("application/json").content("{\"question\":\"监控BTC\"}"))
+                .andExpect(request().asyncStarted()).andReturn();
+        var body=mvc.perform(asyncDispatch(pending)).andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        assertTrue(body.contains("\"type\":\"monitor\"")); assertTrue(body.contains("\"planning\""));
+        assertTrue(body.contains("NOT_CREATED")); assertTrue(body.contains("\"routerLlmCalls\":1"));
+    }
+}

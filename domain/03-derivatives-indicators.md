@@ -60,7 +60,7 @@ OI 增加说明未平仓规模增加，但不说明“净多头增加”。在�
 
 OI 是规模证据，不是资金净流入、净方向或参与者人数。Funding 是持仓成本信号，不是预测胜率。杠杆放大资金口径盈亏，却不自动改变同样数量仓位的价格盈亏金额。
 
-项目仅接入最近 N 期已结算 Funding，OKX 适配取 `realizedRate`，见 [OkxClient](../src/main/java/com/cexpilot/market/OkxClient.java)。官方字段可查 [OKX Funding history](https://my.okx.com/docs-v5/en/#public-data-rest-api-get-funding-rate-history)。当前缺少账户仓位和清算数据，不能回答个人精确强平价，也不能以 OI 代替清算记录。
+项目仅接入最近 N 期已结算 Funding，OKX 适配取 `realizedRate`，见 [OkxClient](../src/main/java/com/cexpilot/business/cex/market/OkxClient.java)。官方字段可查 [OKX Funding history](https://my.okx.com/docs-v5/en/#public-data-rest-api-get-funding-rate-history)。当前缺少账户仓位和清算数据，不能回答个人精确强平价，也不能以 OI 代替清算记录。
 
 ## 4. 对应 CEXPilot Case 与学习练习
 

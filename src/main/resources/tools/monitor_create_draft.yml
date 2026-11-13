@@ -1,0 +1,29 @@
+name: monitor.rule.create_draft
+enabled: true
+description: 保存已经过服务端校验的监控草稿；不会启用规则，启用仍需用户核对版本和通知邮箱后确认。
+control:
+  kind: OPERATION
+  confirmation_required: false
+  summary: 保存待确认监控草稿
+  resource_versions: []
+  idempotent: true
+  expires_after_seconds: 86400
+input_schema:
+  type: object
+  additionalProperties: false
+  required: [source_turn_id, question, candidate, timezone, catalog_version]
+  properties:
+    source_turn_id: {type: string}
+    question: {type: string}
+    candidate: {type: object}
+    timezone: {type: string}
+    catalog_version: {type: string}
+output_schema:
+  type: object
+  additionalProperties: true
+  required: [ruleId, version, specHash, status]
+  properties:
+    ruleId: {type: string}
+    version: {type: integer}
+    specHash: {type: string}
+    status: {type: string}

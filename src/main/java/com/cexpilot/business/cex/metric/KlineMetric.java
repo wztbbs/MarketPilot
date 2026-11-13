@@ -1,0 +1,40 @@
+package com.cexpilot.business.cex.metric;
+
+import com.cexpilot.business.cex.market.MarketCalculator.RangeStats;
+import com.cexpilot.business.cex.market.model.Candle;
+import java.math.BigDecimal;
+import java.util.function.Function;
+
+/** 目录中的稳定选择器，直接读取领域模型，不依赖 Tool JSON 字段名。 */
+public enum KlineMetric implements MetricSelector {
+    OPEN(Candle::open, RangeStats::open),
+    CLOSE(Candle::close, RangeStats::close),
+    HIGH(Candle::high, RangeStats::high),
+    LOW(Candle::low, RangeStats::low),
+    CHANGE_PCT(null, RangeStats::changePct),
+    VOLUME(Candle::volume, RangeStats::volume),
+    TURNOVER(null, RangeStats::quoteVolume);
+
+    private final Function<Candle, BigDecimal> sample;
+    private final Function<RangeStats, BigDecimal> statistic;
+
+    KlineMetric(Function<Candle, BigDecimal> sample, Function<RangeStats, BigDecimal> statistic) {
+        this.sample = sample;
+        this.statistic = statistic;
+    }
+
+    public BigDecimal sample(Candle candle) {
+        if (sample == null) throw new IllegalArgumentException("指标不支持 time_series: " + this);
+        return required(sample.apply(candle));
+    }
+
+    public BigDecimal statistic(RangeStats stats) { return required(statistic.apply(stats)); }
+    @Override public boolean supports(String shape) {
+        return QueryShape.RANGE_STATISTIC.code().equals(shape)
+                || QueryShape.TIME_SERIES.code().equals(shape) && sample != null;
+    }
+    private static BigDecimal required(BigDecimal value) {
+        if (value == null) throw new IllegalArgumentException("来源指标不是数值或缺失");
+        return value;
+    }
+}

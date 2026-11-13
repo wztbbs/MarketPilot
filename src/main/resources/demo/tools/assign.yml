@@ -1,0 +1,54 @@
+{
+  "name": "demo.ticket.assign",
+  "enabled": true,
+  "description": "指派模拟工单，assignee=FAIL 时合成失败",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "ticket_id",
+      "version",
+      "assignee"
+    ],
+    "properties": {
+      "ticket_id": {
+        "type": "string",
+        "pattern": "^[\\s\\S]{1,64}$"
+      },
+      "version": {
+        "type": "integer"
+      },
+      "assignee": {
+        "type": "string",
+        "pattern": "^[\\s\\S]{1,100}$"
+      }
+    }
+  },
+  "output_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "ticket_id",
+      "version",
+      "assignee"
+    ],
+    "properties": {
+      "ticket_id": {
+        "type": "string"
+      },
+      "version": {
+        "type": "integer"
+      },
+      "assignee": {
+        "type": "string"
+      }
+    }
+  },
+  "control": {
+    "kind": "OPERATION",
+    "confirmation_required": true,
+    "summary": "指派模拟工单",
+    "idempotent": true,
+    "expires_after_seconds": 86400
+  }
+}

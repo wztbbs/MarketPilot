@@ -1,0 +1,2 @@
+本地 MySQL 就绪；执行分段运行、强杀 JVM、恢复及业务幂等提交验证。
+本地验证通过。报告：target/surefire-reports/；进程日志：target/run-contract/。
